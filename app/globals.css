@@ -1,0 +1,298 @@
+:root {
+  --bg: #edf2f7;
+  --ink: #101820;
+  --muted: #4f5d6a;
+  --card: #ffffff;
+  --edge: rgba(16, 24, 32, 0.14);
+  --accent: #177299;
+  --accent-2: #f2a742;
+  --success: #1e9d66;
+  --shadow: 0 16px 40px rgba(16, 24, 32, 0.12);
+  --radius: 18px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+  color: var(--ink);
+  background:
+    radial-gradient(circle at 8% 10%, rgba(23, 114, 153, 0.14), transparent 42%),
+    radial-gradient(circle at 80% 0%, rgba(242, 167, 66, 0.2), transparent 35%),
+    linear-gradient(165deg, #f7fafc, #e7eef4);
+  font-family: var(--font-body), sans-serif;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  margin: 0;
+  font-family: var(--font-display), sans-serif;
+  letter-spacing: -0.02em;
+}
+
+p {
+  margin: 0;
+  line-height: 1.6;
+}
+
+.eyebrow {
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.primary-btn,
+.secondary-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  padding: 0.7rem 1.1rem;
+  border: 1px solid transparent;
+  font-weight: 650;
+  font-size: 0.95rem;
+  cursor: pointer;
+  transition: transform 140ms ease, box-shadow 140ms ease;
+}
+
+.primary-btn {
+  background: linear-gradient(120deg, var(--accent), #1e8fbd);
+  color: #fff;
+  box-shadow: 0 10px 25px rgba(23, 114, 153, 0.35);
+}
+
+.secondary-btn {
+  background: var(--card);
+  border-color: var(--edge);
+}
+
+.primary-btn:hover,
+.secondary-btn:hover {
+  transform: translateY(-1px);
+}
+
+.marketing-shell,
+.game-shell {
+  width: min(1150px, calc(100% - 2rem));
+  margin: 2rem auto 3rem;
+  display: grid;
+  gap: 1rem;
+}
+
+.hero-panel,
+.feature-card,
+.openclaw-panel,
+.story-card,
+.game-header-panel,
+.branch-end-panel,
+.proposal-list-panel,
+.option-card {
+  background: var(--card);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.hero-panel {
+  padding: 2rem;
+  display: grid;
+  gap: 0.9rem;
+}
+
+.hero-panel h1 {
+  font-size: clamp(2rem, 4vw, 3rem);
+}
+
+.hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+.hint-text {
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.marketing-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.feature-card {
+  padding: 1.3rem;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.openclaw-panel {
+  padding: 1.4rem;
+  display: grid;
+  gap: 0.65rem;
+}
+
+.openclaw-panel pre {
+  margin: 0;
+  padding: 1rem;
+  overflow-x: auto;
+  background: #0d1d2a;
+  color: #f0f6ff;
+  border-radius: 14px;
+  font-size: 0.83rem;
+  line-height: 1.48;
+}
+
+.game-header-panel {
+  padding: 1.3rem;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.page-heading {
+  font-size: clamp(1.6rem, 3vw, 2.2rem);
+}
+
+.header-actions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.breadcrumb-row {
+  font-size: 0.92rem;
+  color: var(--muted);
+}
+
+.breadcrumb-row a {
+  color: #22597f;
+}
+
+.story-card {
+  padding: 1.5rem;
+  display: grid;
+  gap: 0.7rem;
+}
+
+.options-grid {
+  display: grid;
+  gap: 0.9rem;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+}
+
+.option-card {
+  padding: 1rem;
+  display: grid;
+  gap: 0.4rem;
+}
+
+.option-card h3 {
+  font-size: 1.05rem;
+}
+
+.branch-end-layout {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: 1.1fr 1fr;
+}
+
+.branch-end-panel,
+.proposal-list-panel {
+  padding: 1.1rem;
+  display: grid;
+  gap: 0.8rem;
+}
+
+.proposal-form {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.proposal-form label,
+.proposal-form fieldset {
+  display: grid;
+  gap: 0.35rem;
+  font-size: 0.95rem;
+}
+
+.proposal-form fieldset {
+  margin: 0;
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  padding: 0.7rem;
+}
+
+input,
+textarea {
+  width: 100%;
+  border-radius: 10px;
+  border: 1px solid var(--edge);
+  padding: 0.65rem 0.72rem;
+  font: inherit;
+  background: #fbfdff;
+}
+
+textarea {
+  resize: vertical;
+}
+
+.proposal-list {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.proposal-card {
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  padding: 0.8rem;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.proposal-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  align-items: center;
+  font-size: 0.86rem;
+}
+
+.proposal-options {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.status-tag {
+  color: var(--success);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+@media (max-width: 900px) {
+  .branch-end-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .marketing-shell,
+  .game-shell {
+    width: min(1100px, calc(100% - 1rem));
+    margin-top: 1rem;
+  }
+}
