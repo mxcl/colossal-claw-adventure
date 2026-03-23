@@ -380,6 +380,7 @@ function renderPage(input) {
   const storyClass = pageState.options.length ? "story-shell" : "story-shell branch-shell";
   const currentPath = formatPath(pageState.page.id);
   const isBranchEnd = pageState.options.length === 0;
+  const showBranchEndPanel = pageState.page.isStub;
   const byoclawHref = viewer
     ? `${currentPath}?byoclaw=1&issue=1`
     : `${currentPath}?byoclaw=1`;
@@ -466,7 +467,7 @@ function renderPage(input) {
           </aside>
         </section>
         ${renderStoryOptions(pageState.options)}
-        ${renderProposalList(pageState)}
+        ${showBranchEndPanel ? renderProposalList(pageState) : ""}
         ${renderSiteFooter()}
       </main>
       ${renderBringYourClawModal({
