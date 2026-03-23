@@ -94,6 +94,7 @@ APP_PORT='${APP_PORT}'
 PUBLIC_HOSTNAME='${PUBLIC_HOSTNAME}'
 BASE_URL='${BASE_URL}'
 APP_NODE_ENV='${APP_NODE_ENV}'
+EXPECTED_HEAD_MARKER='<meta property="og:site_name" content="Colossal Claw Adventure">'
 APP_USER="\$(id -un)"
 APP_GROUP="\$(id -gn)"
 SUDO=""
@@ -222,12 +223,87 @@ NGINX
 }
 
 ensure_cmd rsync rsync rsync
+ensure_cmd curl curl curl
 ensure_node_runtime
 ensure_cmd nginx nginx nginx
 ensure_cmd make make make
 ensure_cmd python3 python3 python3
 ensure_cmd g++ gcc-c++ g++
 ensure_swap
+
+verify_unit_file() {
+  local unit_path="/etc/systemd/system/\${SERVICE_NAME}.service"
+
+  if ! \$SUDO test -f "\$unit_path"; then
+    echo "Missing systemd unit: \$unit_path" >&2
+    exit 1
+  fi
+
+  if ! \$SUDO grep -Fx "WorkingDirectory=\$APP_DIR" "\$unit_path" >/dev/null; then
+    echo "systemd unit is not pointing at \$APP_DIR" >&2
+    exit 1
+  fi
+
+  if ! \$SUDO grep -Fx "ExecStart=\$APP_DIR/scripts/start-server.sh" \
+    "\$unit_path" >/dev/null; then
+    echo "systemd unit is not starting \$APP_DIR/scripts/start-server.sh" >&2
+    exit 1
+  fi
+}
+
+wait_for_service() {
+  local main_pid=""
+  local attempt=0
+
+  for attempt in {1..30}; do
+    main_pid=\$($SUDO systemctl show -p MainPID --value "\$SERVICE_NAME")
+
+    if [[ -n "\$main_pid" && "\$main_pid" != "0" ]]; then
+      printf '%s\n' "\$main_pid"
+      return
+    fi
+
+    sleep 1
+  done
+
+  echo "Timed out waiting for \$SERVICE_NAME to start" >&2
+  exit 1
+}
+
+verify_service_process() {
+  local main_pid="\$1"
+  local process_cwd
+
+  process_cwd=\$($SUDO readlink "/proc/\${main_pid}/cwd")
+
+  if [[ "\$process_cwd" != "\$APP_DIR" ]]; then
+    echo "Service main process cwd was \$process_cwd, expected \$APP_DIR" >&2
+    exit 1
+  fi
+}
+
+verify_http_response() {
+  local response_file
+  local attempt=0
+
+  response_file=\$(mktemp)
+
+  for attempt in {1..30}; do
+    if curl -fsS "http://127.0.0.1:\${APP_PORT}/" >"\$response_file"; then
+      if grep -Fq "\$EXPECTED_HEAD_MARKER" "\$response_file"; then
+        rm -f "\$response_file"
+        return
+      fi
+    fi
+
+    sleep 1
+  done
+
+  echo "App did not serve expected Open Graph markup after restart" >&2
+  sed -n '1,40p' "\$response_file" >&2 || true
+  rm -f "\$response_file"
+  exit 1
+}
 
 \$SUDO mkdir -p "\$APP_DIR" "\$DATA_DIR"
 \$SUDO chown -R "\$APP_USER:\$APP_GROUP" "\$APP_DIR" "\$DATA_DIR"
@@ -259,6 +335,7 @@ Group=\$APP_GROUP
 WorkingDirectory=\$APP_DIR
 EnvironmentFile=\$ENV_FILE
 ExecStart=\$APP_DIR/scripts/start-server.sh
+KillMode=control-group
 Restart=always
 RestartSec=5
 
@@ -272,8 +349,14 @@ cd "\$APP_DIR"
 npm ci --omit=dev
 
 \$SUDO systemctl daemon-reload
+\$SUDO systemctl reset-failed "\$SERVICE_NAME" || true
 \$SUDO systemctl enable "\$SERVICE_NAME" >/dev/null
-\$SUDO systemctl restart "\$SERVICE_NAME"
+verify_unit_file
+\$SUDO systemctl stop "\$SERVICE_NAME" || true
+\$SUDO systemctl start "\$SERVICE_NAME"
+main_pid="\$(wait_for_service)"
+verify_service_process "\$main_pid"
+verify_http_response
 \$SUDO systemctl --no-pager --full status "\$SERVICE_NAME" | sed -n '1,12p'
 EOF
 )
