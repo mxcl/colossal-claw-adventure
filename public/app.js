@@ -4,10 +4,7 @@
   const copyButton = document.querySelector("[data-copy-gateway-prompt]");
   const promptBlock = document.querySelector("[data-gateway-prompt] code");
   const pageId = document.body.getAttribute("data-page-id");
-  const resumeBanner = document.querySelector("[data-resume-banner]");
-  const resumeLink = document.querySelector("[data-resume-link]");
   const currentPath = window.location.pathname;
-  const storedPath = window.localStorage.getItem("cca:last-page");
 
   function openModal() {
     if (modal) {
@@ -62,11 +59,6 @@
   }
 
   if (pageId) {
-    if (storedPath && storedPath !== currentPath && resumeBanner && resumeLink) {
-      resumeBanner.hidden = false;
-      resumeLink.href = storedPath;
-    }
-
     window.localStorage.setItem("cca:last-page", currentPath);
     window.localStorage.setItem("cca:last-page-id", pageId);
   }

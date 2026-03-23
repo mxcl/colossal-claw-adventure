@@ -486,10 +486,6 @@ function renderPage(input) {
               <strong>${fakeClawPercent}% of claws</strong> passed through this
               route.
             </p>
-            <div class="resume-banner" data-resume-banner hidden>
-              <span>Resume your last local page:</span>
-              <a href="/" data-resume-link>Return to saved trail</a>
-            </div>
           </aside>
         </section>
         ${renderStoryOptions(pageState.options)}

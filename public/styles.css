@@ -417,8 +417,7 @@ textarea {
 .notice-panel,
 .error-panel,
 .token-panel,
-.spec-card,
-.resume-banner {
+.spec-card {
   margin-bottom: 1rem;
   padding: 1rem;
   border: var(--border);
@@ -438,10 +437,6 @@ textarea {
 
 .spec-card {
   background: #ffffff;
-}
-
-.resume-banner {
-  background: var(--cream);
 }
 
 .story-grid {
@@ -666,8 +661,7 @@ textarea {
   z-index: 5;
 }
 
-.modal-backdrop[hidden],
-.resume-banner[hidden] {
+.modal-backdrop[hidden] {
   display: none;
 }
 
