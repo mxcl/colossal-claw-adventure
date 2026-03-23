@@ -270,6 +270,66 @@ wait_for_service() {
   exit 1
 }
 
+find_listener_pid() {
+  \$SUDO ss -ltnp "( sport = :\${APP_PORT} )" 2>/dev/null | \
+    grep -o 'pid=[0-9]\+' | head -n 1 | cut -d= -f2
+}
+
+clear_conflicting_listener() {
+  local listener_pid=""
+  local service_pid=""
+  local process_cwd=""
+  local process_cmdline=""
+  local attempt=0
+
+  listener_pid="\$(find_listener_pid || true)"
+
+  if [[ -z "\$listener_pid" ]]; then
+    return
+  fi
+
+  service_pid=\$(\$SUDO systemctl show -p MainPID --value "\$SERVICE_NAME" || true)
+
+  if [[ -n "\$service_pid" && "\$listener_pid" == "\$service_pid" ]]; then
+    return
+  fi
+
+  process_cwd=\$(\$SUDO readlink "/proc/\${listener_pid}/cwd" 2>/dev/null || true)
+  process_cmdline=\$(\$SUDO tr '\0' ' ' <"/proc/\${listener_pid}/cmdline" 2>/dev/null || true)
+
+  if [[ "\$process_cwd" != "\$APP_DIR" ]]; then
+    echo "Port \$APP_PORT is occupied by unrelated process \$listener_pid" >&2
+    echo "cwd: \$process_cwd" >&2
+    echo "cmd: \$process_cmdline" >&2
+    exit 1
+  fi
+
+  echo "Stopping stale app listener pid \$listener_pid on port \$APP_PORT" >&2
+  \$SUDO kill "\$listener_pid" || true
+
+  for attempt in {1..10}; do
+    if ! \$SUDO kill -0 "\$listener_pid" 2>/dev/null; then
+      return
+    fi
+
+    sleep 1
+  done
+
+  echo "Force killing stale app listener pid \$listener_pid" >&2
+  \$SUDO kill -9 "\$listener_pid"
+
+  for attempt in {1..10}; do
+    if ! \$SUDO kill -0 "\$listener_pid" 2>/dev/null; then
+      return
+    fi
+
+    sleep 1
+  done
+
+  echo "Failed to remove stale app listener pid \$listener_pid" >&2
+  exit 1
+}
+
 verify_service_process() {
   local main_pid="\$1"
   local process_cwd
@@ -353,6 +413,7 @@ npm ci --omit=dev
 \$SUDO systemctl enable "\$SERVICE_NAME" >/dev/null
 verify_unit_file
 \$SUDO systemctl stop "\$SERVICE_NAME" || true
+clear_conflicting_listener
 \$SUDO systemctl start "\$SERVICE_NAME"
 main_pid="\$(wait_for_service)"
 verify_service_process "\$main_pid"
