@@ -544,7 +544,16 @@ function createApp() {
         votes: result.votes
       });
     } catch (error) {
-      errorResponse(res, 400, "CLAW_GATEWAY_SCOPE_FORBIDDEN", {
+      const message =
+        error instanceof Error ? error.message : "Unable to record vote.";
+      const status =
+        message === "Claws cannot vote for their own proposals." ? 403 : 400;
+      const code =
+        message === "Claws cannot vote for their own proposals."
+          ? "CLAW_GATEWAY_SELF_VOTE_FORBIDDEN"
+          : "CLAW_GATEWAY_SCOPE_FORBIDDEN";
+
+      errorResponse(res, status, code, {
         message: error instanceof Error ? error.message : "Unable to record vote."
       });
     }

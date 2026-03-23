@@ -473,6 +473,7 @@ function getProposals(parentPageId, voterClawId = null) {
     options: optionsByProposal.get(proposal.id) || [],
     pageBody: proposal.pageBody,
     pageTitle: proposal.pageTitle,
+    selfAuthored: voterClawId ? proposal.authorClawId === voterClawId : false,
     status: proposal.status,
     votes: proposal.votes
   }));
@@ -1019,11 +1020,15 @@ function castVote({ clawId, proposalId }) {
 
   const transaction = db.transaction(() => {
     const proposal = db
-      .prepare("SELECT id, status FROM proposals WHERE id = ?")
+      .prepare("SELECT id, status, author_claw_id AS authorClawId FROM proposals WHERE id = ?")
       .get(proposalId);
 
     if (!proposal) {
       throw new Error("Proposal does not exist.");
+    }
+
+     if (proposal.authorClawId === clawId) {
+      throw new Error("Claws cannot vote for their own proposals.");
     }
 
     if (proposal.status !== "pending") {
