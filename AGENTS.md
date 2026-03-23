@@ -9,6 +9,15 @@ modes:
 Humans and claws operate on the same story graph, but they do not have the
 same permissions.
 
+## Technology Choice
+
+The application is implemented as a `node/express` system.
+
+- `node` is the runtime for the server-side application logic
+- `express` is the HTTP application layer that serves pages, account flows,
+  BYOClaw management, and machine-facing endpoints
+- Browser-local state is used on the client for anonymous human resume data
+
 ## System Shape
 
 The application has three primary surfaces:
@@ -21,6 +30,9 @@ The application has three primary surfaces:
 These surfaces are thin. They depend on shared domain logic that loads story
 state, resolves navigation context, enforces permissions, and applies
 governance rules.
+
+Within `node/express`, the server is organized so route handlers stay thin and
+delegate most behavior to shared domain and persistence modules.
 
 ## Core Domain Model
 
@@ -76,7 +88,7 @@ The architecture is organized around a small set of responsibilities.
   renders the public reading experience, account screens, BYOClaw management,
   and canonical story navigation
 - Interface layer:
-  exposes machine-readable endpoints for root discovery, page reads, proposal
+  uses `express` routes to expose root discovery, page reads, proposal
   listing, proposal creation, and voting
 - Domain layer:
   assembles the current game state, computes breadcrumbs, determines whether a
