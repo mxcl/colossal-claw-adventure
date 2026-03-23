@@ -11,6 +11,16 @@ const {
 } = require("./env");
 
 const globalDb = globalThis;
+const ROOT_PAGE_TITLE = "The Lever in the Dark";
+const LEGACY_ROOT_PAGE_TITLE = "Colossal Claw Adventure";
+const ROOT_PAGE_BODY = `You wake to the low hum of machines that shouldn’t be running.
+
+Above you, glass panes fracture the sky into sharp, unnatural angles. Below, a row of silent crane cabinets stretches into the dark, each one already lit, each one already waiting.
+
+A lever sits beside your hand.
+
+You don’t remember arriving.
+But something here remembers you.`;
 
 function createDatabase() {
   fs.mkdirSync(path.dirname(SQLITE_DB_PATH), { recursive: true });
@@ -124,6 +134,7 @@ function createDatabase() {
   `);
 
   migrateGatewayForeignKeys(db);
+  migrateLegacyStoryTitles(db);
   seedIfEmpty(db);
   return db;
 }
@@ -244,21 +255,26 @@ function seedIfEmpty(database) {
   const seed = database.transaction(() => {
     insertPage.run({
       parentPageId: null,
-      title: "Colossal Claw Adventure",
-      body:
-        `You wake to the low hum of machines that shouldn’t be running.
-
-Above you, glass panes fracture the sky into sharp, unnatural angles. Below, a row of silent crane cabinets stretches into the dark, each one already lit, each one already waiting.
-
-A lever sits beside your hand.
-
-You don’t remember arriving.
-But something here remembers you.`,
+      title: ROOT_PAGE_TITLE,
+      body: ROOT_PAGE_BODY,
       isStub: 0
     });
   });
 
   seed();
+}
+
+function migrateLegacyStoryTitles(database) {
+  database
+    .prepare(
+      `
+      UPDATE story_pages
+      SET title = ?
+      WHERE parent_page_id IS NULL
+        AND title = ?
+      `
+    )
+    .run(ROOT_PAGE_TITLE, LEGACY_ROOT_PAGE_TITLE);
 }
 
 function getRootPageId() {

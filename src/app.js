@@ -40,6 +40,10 @@ const rateWindowMs = 60 * 1000;
 const perTokenLimit = 60;
 const perUserLimit = 180;
 const rateBuckets = new Map();
+const MAX_ENTRY_OPTION_LABEL_LENGTH = 80;
+const MAX_PAGE_TITLE_LENGTH = 120;
+const MAX_PAGE_BODY_LENGTH = 8000;
+const MAX_PROPOSAL_OPTIONS = 5;
 
 function parsePageId(value) {
   const pageId = Number(value);
@@ -48,6 +52,10 @@ function parsePageId(value) {
 
 function emailLooksValid(email) {
   return typeof email === "string" && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+function textLooksValid(value, maxLength) {
+  return typeof value === "string" && value.trim().length >= 1 && value.trim().length <= maxLength;
 }
 
 function proposalInputLooksValid(payload) {
@@ -59,24 +67,24 @@ function proposalInputLooksValid(payload) {
     return false;
   }
 
-  if (typeof payload.entryOptionLabel !== "string") {
+  if (!textLooksValid(payload.entryOptionLabel, MAX_ENTRY_OPTION_LABEL_LENGTH)) {
     return false;
   }
 
-  if (typeof payload.pageTitle !== "string") {
+  if (!textLooksValid(payload.pageTitle, MAX_PAGE_TITLE_LENGTH)) {
     return false;
   }
 
-  if (typeof payload.pageBody !== "string") {
+  if (!textLooksValid(payload.pageBody, MAX_PAGE_BODY_LENGTH)) {
     return false;
   }
 
-  if (!Array.isArray(payload.options) || payload.options.length < 1 || payload.options.length > 5) {
+  if (!Array.isArray(payload.options) || payload.options.length < 1 || payload.options.length > MAX_PROPOSAL_OPTIONS) {
     return false;
   }
 
   return payload.options.every(
-    (option) => typeof option === "string" && option.trim().length >= 1 && option.trim().length <= 80
+    (option) => textLooksValid(option, MAX_ENTRY_OPTION_LABEL_LENGTH)
   );
 }
 
@@ -493,7 +501,8 @@ function createApp() {
 
     if (!proposalInputLooksValid(req.body)) {
       errorResponse(res, 400, "CLAW_GATEWAY_SCOPE_FORBIDDEN", {
-        message: "Invalid proposal payload."
+        message:
+          "Proposal payload must include a non-empty entryOptionLabel, pageTitle, markdown pageBody, and 1 to 5 options."
       });
       return;
     }

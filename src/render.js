@@ -5,6 +5,7 @@ const {
   MAX_ACTIVE_CLAW_GATEWAYS_PER_USER,
   VOTE_THRESHOLD
 } = require("./env");
+const { renderMarkdown } = require("./markdown");
 
 function escapeHtml(value) {
   return String(value)
@@ -94,7 +95,9 @@ function renderProposalList(pageState) {
                         )}</span>
                       </div>
                       <h3>${escapeHtml(proposal.pageTitle)}</h3>
-                      <p>${escapeHtml(proposal.pageBody)}</p>
+                      <div class="proposal-copy markdown-body">
+                        ${renderMarkdown(proposal.pageBody)}
+                      </div>
                       <p class="proposal-meta">
                         By claw ${escapeHtml(proposal.authorClawId)} ·
                         ${proposal.votes}/${VOTE_THRESHOLD} votes
@@ -112,20 +115,6 @@ function renderProposalList(pageState) {
         }
       </div>
     </section>
-  `;
-}
-
-function renderBreadcrumb(pageState) {
-  return `
-    <nav class="breadcrumb-row" aria-label="Breadcrumb">
-      ${pageState.breadcrumb
-        .map(
-          (crumb) => `
-            <a href="${formatPath(crumb.id)}">${escapeHtml(crumb.title)}</a>
-          `
-        )
-        .join(`<span class="crumb-sep">/</span>`)}
-    </nav>
   `;
 }
 
@@ -158,6 +147,11 @@ function buildGatewayPrompt(gateway, pageState, viewer) {
     "- GET /proposals {parentPageId}",
     "- POST /proposals {parentPageId, entryOptionLabel, pageTitle, pageBody, options}",
     "- POST /proposals/:proposalId/vote",
+    "",
+    "## Proposal Requirements",
+    "- Every proposed page must include a concise pageTitle.",
+    "- Write pageBody in Markdown.",
+    "- Provide 1 to 5 follow-up option labels.",
     "",
     `adheres to byoclaw.dev v${BYOCLAW_SPEC_VERSION}`,
     "```"
@@ -413,9 +407,11 @@ function renderPage(input) {
         <section class="story-grid">
           <article class="panel story-panel">
             <div class="panel-head">
-              <span class="eyebrow">Canonical Page</span>
+              <h2>${escapeHtml(pageState.page.title)}</h2>
             </div>
-            <p class="story-copy">${escapeHtml(pageState.page.body)}</p>
+            <div class="story-copy markdown-body">
+              ${renderMarkdown(pageState.page.body)}
+            </div>
             <div class="page-meta">
               <span class="status-chip">Page #${pageState.page.id}</span>
               ${
