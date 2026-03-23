@@ -106,13 +106,6 @@ function renderStoryOptions(options) {
             (option) => `
               <a class="option-card" href="${formatPath(option.targetPageId)}">
                 <strong>${escapeHtml(option.label)}</strong>
-                <span class="option-meta">
-                  ${
-                    option.targetIsStub
-                      ? "Leads to an unwritten branch end."
-                      : `Leads to ${escapeHtml(option.targetTitle)}`
-                  }
-                </span>
               </a>
             `
           )
