@@ -672,6 +672,10 @@ html[data-has-saved-story="1"] .landing-actions [data-landing-restart] {
   margin: 0 0 0.45rem;
 }
 
+.option-card strong {
+  margin-bottom: 0;
+}
+
 .progress-card strong {
   font-size: clamp(2rem, 5vw, 3rem);
   line-height: 0.9;
@@ -690,7 +694,6 @@ html[data-has-saved-story="1"] .landing-actions [data-landing-restart] {
   margin-top: 1rem;
 }
 
-.option-meta,
 .proposal-meta,
 .proposal-options,
 .tiny-copy {
