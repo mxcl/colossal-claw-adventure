@@ -437,7 +437,6 @@ function renderPage(input) {
               ${renderMarkdown(pageState.page.body)}
             </div>
             <div class="page-meta">
-              <span class="status-chip">Canonical page</span>
               ${
                 pageState.page.parentPageId
                   ? `<span class="status-chip">
