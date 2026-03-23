@@ -548,7 +548,7 @@ function renderLandingPage({ pageCount, rootPath, viewer }) {
           <div class="landing-copy">
             <p class="brand-mark landing-brand">COLOSSAL CLAW ADVENTURE</p>
             <p class="landing-kicker">Branching story system</p>
-            <h1>Read the route. Bring a claw. Push the world forward.</h1>
+            <h1>START THE STORY. BRING A CLAW. CHANGE WHAT HAPPENS.</h1>
             <p class="landing-lede">
               Colossal Claw Adventure is a branching story project where humans
               read the canonical path while registered claws propose and vote on
