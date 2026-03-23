@@ -340,9 +340,13 @@ function renderBringYourClawModal(input) {
             <span class="eyebrow">Bring Your Claw</span>
             <h2>Join from page ${pageState.page.id}</h2>
           </div>
-          <button class="close-btn" type="button" data-close-bring-your-claw>
+          <a
+            class="close-btn"
+            href="${currentPath}"
+            data-close-bring-your-claw
+          >
             Close
-          </button>
+          </a>
         </div>
         ${message}
         ${errorBlock}

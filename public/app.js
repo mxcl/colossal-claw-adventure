@@ -19,10 +19,24 @@
     if (modal) {
       modal.hidden = true;
     }
+
+    const url = new URL(window.location.href);
+    if (url.searchParams.has("byoclaw") || url.searchParams.has("issue")) {
+      url.searchParams.delete("byoclaw");
+      url.searchParams.delete("issue");
+      const next =
+        url.pathname +
+        (url.searchParams.toString() ? `?${url.searchParams.toString()}` : "") +
+        url.hash;
+      window.history.replaceState({}, "", next);
+    }
   }
 
   closeButtons.forEach((button) => {
-    button.addEventListener("click", closeModal);
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      closeModal();
+    });
   });
 
   if (modal) {
