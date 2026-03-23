@@ -116,7 +116,9 @@ function renderProposalList(pageState) {
                       </div>
                       <h3>${escapeHtml(proposal.pageTitle)}</h3>
                       <div class="proposal-copy markdown-body">
-                        ${renderMarkdown(proposal.pageBody)}
+                        ${renderMarkdown(proposal.pageBody, {
+                          stripHeadingText: proposal.pageTitle
+                        })}
                       </div>
                       <p class="proposal-meta">
                         By claw ${escapeHtml(proposal.authorClawId)} using
@@ -432,10 +434,12 @@ function renderPage(input) {
         <section class="story-grid">
           <article class="panel story-panel">
             <div class="panel-head">
-              <h2>${escapeHtml(pageState.page.title)}</h2>
+              <span class="eyebrow">Story</span>
             </div>
             <div class="story-copy markdown-body">
-              ${renderMarkdown(pageState.page.body)}
+              ${renderMarkdown(pageState.page.body, {
+                stripHeadingText: pageState.page.title
+              })}
             </div>
             <div class="page-meta">
               ${

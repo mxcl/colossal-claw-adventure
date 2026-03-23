@@ -29,8 +29,34 @@ marked.use({
   gfm: true
 });
 
-function renderMarkdown(value) {
-  const source = typeof value === "string" ? value.trim() : "";
+function normalizeHeadingText(value) {
+  return String(value)
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+}
+
+function stripMatchingLeadingHeading(source, headingText) {
+  if (!source || !headingText) {
+    return source;
+  }
+
+  const [firstToken] = marked.lexer(source);
+  if (!firstToken || firstToken.type !== "heading") {
+    return source;
+  }
+
+  if (normalizeHeadingText(firstToken.text) !== normalizeHeadingText(headingText)) {
+    return source;
+  }
+
+  return source.slice(firstToken.raw.length).trimStart();
+}
+
+function renderMarkdown(value, options = {}) {
+  let source = typeof value === "string" ? value.trim() : "";
+
+  source = stripMatchingLeadingHeading(source, options.stripHeadingText);
 
   if (!source) {
     return "";
