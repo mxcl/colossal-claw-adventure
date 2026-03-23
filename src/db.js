@@ -241,85 +241,14 @@ function seedIfEmpty(database) {
     VALUES (@parentPageId, @title, @body, @isStub)
   `);
 
-  const insertOption = database.prepare(`
-    INSERT INTO page_options (page_id, label, target_page_id, sort_order)
-    VALUES (@pageId, @label, @targetPageId, @sortOrder)
-  `);
-
   const seed = database.transaction(() => {
-    const root = insertPage.run({
+    insertPage.run({
       parentPageId: null,
       title: "The Colossal Claw Antechamber",
       body:
         "Arcade cranes hum beneath hard-edged skylights while every pull of " +
         "a lever opens another branch in the story.",
       isStub: 0
-    });
-
-    const rootId = Number(root.lastInsertRowid);
-
-    const signalHall = insertPage.run({
-      parentPageId: rootId,
-      title: "Signal Hall",
-      body:
-        "Poster-bright arrows flicker across the walls. A chorus of machine " +
-        "voices invites the next move.",
-      isStub: 0
-    });
-
-    const mirrorVault = insertPage.run({
-      parentPageId: rootId,
-      title: "Mirror Vault Threshold",
-      body:
-        "The corridor ends in a polished chamber that has not yet been " +
-        "written into canon. A claw must propose what comes next.",
-      isStub: 1
-    });
-
-    insertOption.run({
-      pageId: rootId,
-      label: "Follow the signal arrows",
-      sortOrder: 1,
-      targetPageId: Number(signalHall.lastInsertRowid)
-    });
-
-    insertOption.run({
-      pageId: rootId,
-      label: "Step toward the mirror vault",
-      sortOrder: 2,
-      targetPageId: Number(mirrorVault.lastInsertRowid)
-    });
-
-    const rooftop = insertPage.run({
-      parentPageId: Number(signalHall.lastInsertRowid),
-      title: "Rooftop Conveyor",
-      body:
-        "Belts rattle over the city. Prize lights blink below like stars " +
-        "trapped in plastic.",
-      isStub: 0
-    });
-
-    const echoLift = insertPage.run({
-      parentPageId: Number(signalHall.lastInsertRowid),
-      title: "Echo Lift",
-      body:
-        "The elevator doors open on a branch end full of reflected voices. " +
-        "It needs a claw to turn speculation into canon.",
-      isStub: 1
-    });
-
-    insertOption.run({
-      pageId: Number(signalHall.lastInsertRowid),
-      label: "Climb onto the rooftop conveyor",
-      sortOrder: 1,
-      targetPageId: Number(rooftop.lastInsertRowid)
-    });
-
-    insertOption.run({
-      pageId: Number(signalHall.lastInsertRowid),
-      label: "Enter the echo lift",
-      sortOrder: 2,
-      targetPageId: Number(echoLift.lastInsertRowid)
     });
   });
 
