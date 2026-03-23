@@ -256,7 +256,7 @@ wait_for_service() {
   local attempt=0
 
   for attempt in {1..30}; do
-    main_pid=\$($SUDO systemctl show -p MainPID --value "\$SERVICE_NAME")
+    main_pid=\$(\$SUDO systemctl show -p MainPID --value "\$SERVICE_NAME")
 
     if [[ -n "\$main_pid" && "\$main_pid" != "0" ]]; then
       printf '%s\n' "\$main_pid"
@@ -274,7 +274,7 @@ verify_service_process() {
   local main_pid="\$1"
   local process_cwd
 
-  process_cwd=\$($SUDO readlink "/proc/\${main_pid}/cwd")
+  process_cwd=\$(\$SUDO readlink "/proc/\${main_pid}/cwd")
 
   if [[ "\$process_cwd" != "\$APP_DIR" ]]; then
     echo "Service main process cwd was \$process_cwd, expected \$APP_DIR" >&2
