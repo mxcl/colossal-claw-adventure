@@ -86,6 +86,7 @@ function createDatabase() {
       page_title TEXT NOT NULL,
       page_body TEXT NOT NULL,
       author_claw_id TEXT NOT NULL,
+      author_model TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'pending',
       approved_page_id INTEGER,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -134,6 +135,7 @@ function createDatabase() {
   `);
 
   migrateGatewayForeignKeys(db);
+  migrateProposalModels(db);
   migrateLegacyStoryTitles(db);
   seedIfEmpty(db);
   return db;
@@ -147,6 +149,13 @@ function foreignKeyTargets(database, tableName) {
     .prepare(`PRAGMA foreign_key_list(${tableName})`)
     .all()
     .map((row) => row.table);
+}
+
+function tableColumns(database, tableName) {
+  return database
+    .prepare(`PRAGMA table_info(${tableName})`)
+    .all()
+    .map((row) => row.name);
 }
 
 function migrateGatewayForeignKeys(database) {
@@ -234,6 +243,64 @@ function migrateGatewayForeignKeys(database) {
         ALTER TABLE proposal_votes_new RENAME TO proposal_votes;
       `);
     }
+  });
+
+  migrate();
+  database.exec("PRAGMA foreign_keys = ON");
+}
+
+function migrateProposalModels(database) {
+  if (tableColumns(database, "proposals").includes("author_model")) {
+    return;
+  }
+
+  database.exec("PRAGMA foreign_keys = OFF");
+
+  const migrate = database.transaction(() => {
+    database.exec(`
+      CREATE TABLE proposals_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        parent_page_id INTEGER NOT NULL,
+        entry_option_label TEXT NOT NULL,
+        page_title TEXT NOT NULL,
+        page_body TEXT NOT NULL,
+        author_claw_id TEXT NOT NULL,
+        author_model TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        approved_page_id INTEGER,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(parent_page_id) REFERENCES story_pages(id),
+        FOREIGN KEY(approved_page_id) REFERENCES story_pages(id)
+      );
+
+      INSERT INTO proposals_new (
+        id,
+        parent_page_id,
+        entry_option_label,
+        page_title,
+        page_body,
+        author_claw_id,
+        author_model,
+        status,
+        approved_page_id,
+        created_at
+      )
+      SELECT
+        id,
+        parent_page_id,
+        entry_option_label,
+        page_title,
+        page_body,
+        author_claw_id,
+        'unknown',
+        status,
+        approved_page_id,
+        created_at
+      FROM proposals;
+
+      DROP TABLE proposals;
+      ALTER TABLE proposals_new RENAME TO proposals;
+    `);
   });
 
   migrate();
@@ -389,6 +456,7 @@ function getProposals(parentPageId, voterClawId = null) {
         proposals.page_title AS pageTitle,
         proposals.page_body AS pageBody,
         proposals.author_claw_id AS authorClawId,
+        proposals.author_model AS model,
         proposals.status,
         proposals.created_at AS createdAt,
         COUNT(proposal_votes.id) AS votes
@@ -434,6 +502,7 @@ function getProposals(parentPageId, voterClawId = null) {
     createdAt: proposal.createdAt,
     entryOptionLabel: proposal.entryOptionLabel,
     id: proposal.id,
+    model: proposal.model,
     options: optionsByProposal.get(proposal.id) || [],
     pageBody: proposal.pageBody,
     pageTitle: proposal.pageTitle,
@@ -835,9 +904,10 @@ function createProposal(input) {
           entry_option_label,
           page_title,
           page_body,
-          author_claw_id
+          author_claw_id,
+          author_model
         )
-        VALUES (?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?)
         `
       )
       .run(
@@ -845,7 +915,8 @@ function createProposal(input) {
         input.entryOptionLabel,
         input.pageTitle,
         input.pageBody,
-        input.authorClawId
+        input.authorClawId,
+        input.model
       );
 
     const proposalId = Number(result.lastInsertRowid);

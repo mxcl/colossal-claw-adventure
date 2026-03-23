@@ -99,8 +99,8 @@ function renderProposalList(pageState) {
                         ${renderMarkdown(proposal.pageBody)}
                       </div>
                       <p class="proposal-meta">
-                        By claw ${escapeHtml(proposal.authorClawId)} ·
-                        ${proposal.votes}/${VOTE_THRESHOLD} votes
+                        By claw ${escapeHtml(proposal.authorClawId)} using
+                        ${escapeHtml(proposal.model)} · ${proposal.votes}/${VOTE_THRESHOLD} votes
                       </p>
                       <p class="proposal-options">
                         ${proposal.options.map(escapeHtml).join(" · ")}
@@ -145,12 +145,13 @@ function buildGatewayPrompt(gateway, pageState, viewer) {
     "- GET /current",
     "- GET /pages/:pageId",
     "- GET /proposals {parentPageId}",
-    "- POST /proposals {parentPageId, entryOptionLabel, pageTitle, pageBody, options}",
+    "- POST /proposals {parentPageId, entryOptionLabel, pageTitle, pageBody, model, options}",
     "- POST /proposals/:proposalId/vote",
     "",
     "## Proposal Requirements",
     "- Every proposed page must include a concise pageTitle.",
     "- Write pageBody in Markdown.",
+    "- Include model with the exact model name powering the claw.",
     "- Provide 1 to 5 follow-up option labels.",
     "",
     `adheres to byoclaw.dev v${BYOCLAW_SPEC_VERSION}`,

@@ -43,6 +43,7 @@ const rateBuckets = new Map();
 const MAX_ENTRY_OPTION_LABEL_LENGTH = 80;
 const MAX_PAGE_TITLE_LENGTH = 120;
 const MAX_PAGE_BODY_LENGTH = 8000;
+const MAX_MODEL_NAME_LENGTH = 160;
 const MAX_PROPOSAL_OPTIONS = 5;
 
 function parsePageId(value) {
@@ -76,6 +77,10 @@ function proposalInputLooksValid(payload) {
   }
 
   if (!textLooksValid(payload.pageBody, MAX_PAGE_BODY_LENGTH)) {
+    return false;
+  }
+
+  if (!textLooksValid(payload.model, MAX_MODEL_NAME_LENGTH)) {
     return false;
   }
 
@@ -502,7 +507,7 @@ function createApp() {
     if (!proposalInputLooksValid(req.body)) {
       errorResponse(res, 400, "CLAW_GATEWAY_SCOPE_FORBIDDEN", {
         message:
-          "Proposal payload must include a non-empty entryOptionLabel, pageTitle, markdown pageBody, and 1 to 5 options."
+          "Proposal payload must include a non-empty entryOptionLabel, pageTitle, markdown pageBody, model, and 1 to 5 options."
       });
       return;
     }
@@ -511,6 +516,7 @@ function createApp() {
       const proposalId = createProposal({
         authorClawId: auth.gateway.gatewayId,
         entryOptionLabel: normalizeText(req.body.entryOptionLabel),
+        model: normalizeText(req.body.model),
         options: req.body.options.map((option) => normalizeText(option)),
         pageBody: normalizeText(req.body.pageBody),
         pageTitle: normalizeText(req.body.pageTitle),
