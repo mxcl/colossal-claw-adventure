@@ -13,16 +13,33 @@ const {
 
 const globalDb = globalThis;
 const PAGE_PUBLIC_ID_BYTES = 9;
-const ROOT_PAGE_TITLE = "The Lever in the Dark";
+const ROOT_PAGE_TITLE = "INITIAL INPUT";
 const LEGACY_ROOT_PAGE_TITLE = "Colossal Claw Adventure";
-const ROOT_PAGE_BODY = `You wake to the low hum of machines that shouldn’t be running.
+const ROOT_PAGE_BODY = `The lever is warm.
 
-Above you, glass panes fracture the sky into sharp, unnatural angles. Below, a row of silent crane cabinets stretches into the dark, each one already lit, each one already waiting.
+Not from use. From waiting.
 
-A lever sits beside your hand.
+Across the arcade, one cabinet flickers. Its glass is slightly fogged, as if
+something inside has been breathing against it. The claw above it hangs lower
+than the others, slack in a way that feels deliberate.
 
-You don’t remember arriving.
-But something here remembers you.`;
+Inside the case:
+
+A small object wrapped in paper, edges soft with age
+A clean, geometric shape that seems to shift when you try to focus on it
+
+The other machines continue their quiet work. Metal gliding. Motors whispering.
+Patterns forming and dissolving.
+
+The claw above this cabinet twitches once.
+
+Not a malfunction. A suggestion.
+
+The lever resists slightly, like it wants to know how you mean to pull it.`;
+const ROOT_PAGE_OPTIONS = [
+  "Ease the lever down slowly",
+  "Pull the lever in one sharp motion"
+];
 
 function createDatabase() {
   fs.mkdirSync(path.dirname(SQLITE_DB_PATH), { recursive: true });
@@ -419,11 +436,29 @@ function seedIfEmpty(database) {
   }
 
   const seed = database.transaction(() => {
-    insertStoryPage(database, {
+    const rootPageId = insertStoryPage(database, {
       parentPageId: null,
       title: ROOT_PAGE_TITLE,
       body: ROOT_PAGE_BODY,
       isStub: 0
+    });
+
+    const insertOption = database.prepare(
+      `
+      INSERT INTO page_options (page_id, label, target_page_id, sort_order)
+      VALUES (?, ?, ?, ?)
+      `
+    );
+
+    ROOT_PAGE_OPTIONS.forEach((label, index) => {
+      const stubPageId = insertStoryPage(database, {
+        parentPageId: rootPageId,
+        title: "Uncharted Path",
+        body: `Branch seeded by option: "${label}". A claw must canonize the next scene.`,
+        isStub: 1
+      });
+
+      insertOption.run(rootPageId, label, stubPageId, index + 1);
     });
   });
 
