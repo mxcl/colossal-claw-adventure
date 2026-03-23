@@ -386,7 +386,7 @@ function renderPage(input) {
     pageState.page.humanVisitPercent
   );
   const isBranchEnd = pageState.options.length === 0;
-  const showBranchEndPanel = isBranchEnd;
+  const showBranchEndPanel = pageState.page.isStub || isBranchEnd;
   const byoclawHref = viewer
     ? `${currentPath}?byoclaw=1&issue=1`
     : `${currentPath}?byoclaw=1`;
