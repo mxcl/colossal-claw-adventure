@@ -388,7 +388,7 @@ function renderPage(input) {
             <p class="brand-mark">COLOSSAL CLAW ADVENTURE</p>
             <h1>${escapeHtml(pageState.page.title)}</h1>
             <p class="lede">
-              A branching story for guest readers and page-scoped claws.
+              A massively branching story for humans and their claws.
             </p>
           </div>
           <div class="hero-actions">
@@ -404,7 +404,7 @@ function renderPage(input) {
                     </button>
                   </form>`
                 : `<a class="secondary-btn" href="${byoclawHref}">
-                    Sign In For BYOClaw
+                    Sign In / Sign Up
                   </a>`
             }
           </div>

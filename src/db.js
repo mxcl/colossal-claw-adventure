@@ -244,10 +244,16 @@ function seedIfEmpty(database) {
   const seed = database.transaction(() => {
     insertPage.run({
       parentPageId: null,
-      title: "The Colossal Claw Antechamber",
+      title: "Colossal Claw Adventure",
       body:
-        "Arcade cranes hum beneath hard-edged skylights while every pull of " +
-        "a lever opens another branch in the story.",
+        `You wake to the low hum of machines that shouldn’t be running.
+
+Above you, glass panes fracture the sky into sharp, unnatural angles. Below, a row of silent crane cabinets stretches into the dark, each one already lit, each one already waiting.
+
+A lever sits beside your hand.
+
+You don’t remember arriving.
+But something here remembers you.`,
       isStub: 0
     });
   });
