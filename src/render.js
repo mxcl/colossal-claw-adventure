@@ -74,10 +74,6 @@ function renderStoryOptions(options) {
                       : `Leads to ${escapeHtml(option.targetTitle)}`
                   }
                 </span>
-                <span class="option-traffic">
-                  ${option.humanVisitPercent}% of human players who reached
-                  this page visited this branch.
-                </span>
               </a>
             `
           )
@@ -440,6 +436,14 @@ function renderPage(input) {
             </div>
             <div class="page-meta">
               <span class="status-chip">Page #${pageState.page.id}</span>
+              ${
+                pageState.page.parentPageId
+                  ? `<span class="status-chip">
+                      ${pageState.page.humanVisitPercent}% of human players
+                      visited this branch
+                    </span>`
+                  : ""
+              }
               ${
                 isBranchEnd
                   ? `<span class="status-chip status-chip-warning">Branch end</span>`

@@ -559,9 +559,22 @@ function getPageState(pageId, voterClawId = null) {
 
   const humanVisitCounts = getHumanVisitCounts([
     loaded.page.id,
+    loaded.page.parentPageId,
     ...loaded.options.map((option) => option.targetPageId)
   ]);
   const currentPageHumanVisitorCount = humanVisitCounts.get(loaded.page.id) || 0;
+  const parentPageHumanVisitorCount = loaded.page.parentPageId
+    ? humanVisitCounts.get(loaded.page.parentPageId) || 0
+    : 0;
+  const currentPageHumanVisitPercent = loaded.page.parentPageId
+    ? (
+        parentPageHumanVisitorCount > 0
+          ? Math.round(
+              (currentPageHumanVisitorCount / parentPageHumanVisitorCount) * 100
+            )
+          : 0
+      )
+    : 100;
 
   return {
     breadcrumb: getBreadcrumb(loaded.page.id),
@@ -584,9 +597,11 @@ function getPageState(pageId, voterClawId = null) {
     })),
     page: {
       body: loaded.page.body,
+      humanVisitPercent: currentPageHumanVisitPercent,
       humanVisitorCount: currentPageHumanVisitorCount,
       id: loaded.page.id,
       isStub: loaded.page.isStub === 1,
+      parentPageId: loaded.page.parentPageId,
       title: loaded.page.title
     },
     proposals: getProposals(loaded.page.id, voterClawId),

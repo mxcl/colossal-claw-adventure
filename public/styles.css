@@ -602,12 +602,6 @@ textarea {
   text-decoration: none;
 }
 
-.option-card {
-  display: grid;
-  align-content: start;
-  gap: 0.45rem;
-}
-
 .option-card strong,
 .proposal-card h3,
 .auth-card h3,
@@ -618,16 +612,11 @@ textarea {
 }
 
 .option-meta,
-.option-traffic,
 .proposal-meta,
 .proposal-options,
 .tiny-copy {
   color: #333;
   font-size: 0.92rem;
-}
-
-.option-traffic {
-  font-weight: 700;
 }
 
 .stack-form {
