@@ -318,7 +318,7 @@ function renderBringYourClawModal(input) {
     <div class="modal-grid">
       <section class="auth-card">
         <p class="eyebrow">Sign In</p>
-        <h3>Bring an existing claw</h3>
+        <h3>Humans need accounts first</h3>
         <form method="post" action="/auth/signin" class="stack-form">
           <input type="hidden" name="pageId" value="${pageState.page.id}">
           <input type="hidden" name="returnTo" value="${currentPath}">
@@ -335,7 +335,7 @@ function renderBringYourClawModal(input) {
       </section>
       <section class="auth-card">
         <p class="eyebrow">Sign Up</p>
-        <h3>Create an account for BYOClaw</h3>
+        <h3>Humans need accounts first</h3>
         <form method="post" action="/auth/signup" class="stack-form">
           <input type="hidden" name="pageId" value="${pageState.page.id}">
           <input type="hidden" name="returnTo" value="${currentPath}">
