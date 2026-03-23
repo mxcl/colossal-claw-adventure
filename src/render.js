@@ -7,6 +7,14 @@ const {
 } = require("./env");
 const { renderMarkdown } = require("./markdown");
 
+const PREVIEW_IMAGE_URL = `${BASE_URL}/preview.jpg`;
+const PREVIEW_IMAGE_WIDTH = 1773;
+const PREVIEW_IMAGE_HEIGHT = 886;
+const PREVIEW_IMAGE_ALT =
+  "Colossal Claw Adventure preview art for the branching story.";
+const DEFAULT_PAGE_DESCRIPTION =
+  "A massively branching story for humans and their claws.";
+
 function escapeHtml(value) {
   return String(value)
     .replaceAll("&", "&amp;")
@@ -18,6 +26,27 @@ function escapeHtml(value) {
 
 function formatPath(pageId) {
   return `/page/${encodeURIComponent(pageId)}`;
+}
+
+function renderSocialMeta({ description, path, title }) {
+  const pageUrl = `${BASE_URL}${path}`;
+
+  return `
+      <meta name="description" content="${escapeHtml(description)}">
+      <meta property="og:type" content="website">
+      <meta property="og:site_name" content="Colossal Claw Adventure">
+      <meta property="og:title" content="${escapeHtml(title)}">
+      <meta property="og:description" content="${escapeHtml(description)}">
+      <meta property="og:url" content="${escapeHtml(pageUrl)}">
+      <meta property="og:image" content="${escapeHtml(PREVIEW_IMAGE_URL)}">
+      <meta property="og:image:width" content="${PREVIEW_IMAGE_WIDTH}">
+      <meta property="og:image:height" content="${PREVIEW_IMAGE_HEIGHT}">
+      <meta property="og:image:alt" content="${escapeHtml(PREVIEW_IMAGE_ALT)}">
+      <meta name="twitter:card" content="summary_large_image">
+      <meta name="twitter:title" content="${escapeHtml(title)}">
+      <meta name="twitter:description" content="${escapeHtml(description)}">
+      <meta name="twitter:image" content="${escapeHtml(PREVIEW_IMAGE_URL)}">
+    `;
 }
 
 function renderNotice(notice) {
@@ -398,6 +427,7 @@ function renderBringYourClawModal(input) {
 function renderPage(input) {
   const { modal, notice, pageState, viewer } = input;
   const pageTitle = `${pageState.page.title} · Colossal Claw Adventure`;
+  const pageDescription = `${pageState.page.title} in Colossal Claw Adventure. ${DEFAULT_PAGE_DESCRIPTION}`;
   const storyClass = pageState.options.length ? "story-shell" : "story-shell branch-shell";
   const currentPath = formatPath(pageState.page.id);
   const fakeClawPercent = fakeClawVisitPercent(
@@ -416,6 +446,11 @@ function renderPage(input) {
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width, initial-scale=1">
       <title>${escapeHtml(pageTitle)}</title>
+      ${renderSocialMeta({
+        description: pageDescription,
+        path: currentPath,
+        title: pageTitle
+      })}
       <link rel="canonical" href="${escapeHtml(`${BASE_URL}${currentPath}`)}">
       <link rel="stylesheet" href="/styles.css">
     </head>
@@ -513,6 +548,8 @@ function renderPage(input) {
 
 function renderLandingPage({ pageCount, rootPath, viewer }) {
   const pageTitle = "Colossal Claw Adventure";
+  const pageDescription =
+    "Start the story, bring a claw, and help decide what happens next.";
   const pageLabel = pageCount === 1 ? "page" : "pages";
   const showResumeActions = Boolean(viewer);
 
@@ -522,6 +559,11 @@ function renderLandingPage({ pageCount, rootPath, viewer }) {
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width, initial-scale=1">
       <title>${escapeHtml(pageTitle)}</title>
+      ${renderSocialMeta({
+        description: pageDescription,
+        path: "/",
+        title: pageTitle
+      })}
       <link rel="canonical" href="${escapeHtml(`${BASE_URL}/`)}">
       <script>
         (() => {
@@ -628,12 +670,19 @@ function renderLandingPage({ pageCount, rootPath, viewer }) {
 }
 
 function renderRedirectingPage(rootPath) {
+  const pageTitle = "Colossal Claw Adventure";
+
   return `<!doctype html>
   <html lang="en">
     <head>
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width, initial-scale=1">
-      <title>Colossal Claw Adventure</title>
+      <title>${pageTitle}</title>
+      ${renderSocialMeta({
+        description: DEFAULT_PAGE_DESCRIPTION,
+        path: rootPath,
+        title: pageTitle
+      })}
       <link rel="stylesheet" href="/styles.css">
     </head>
     <body class="redirect-shell">
