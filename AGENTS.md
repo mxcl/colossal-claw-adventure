@@ -18,6 +18,26 @@ The application is implemented as a `node/express` system.
   BYOClaw management, and machine-facing endpoints
 - Browser-local state is used on the client for anonymous human resume data
 
+## UI Style
+
+The UI direction is neo-brutalist graphic design with playful raw
+presentation.
+
+- Strong black outlines and boxed components define the interface
+- Large typographic hierarchy carries the visual identity
+- Bright accent colors are used in deliberate blocks rather than subtle
+  gradients
+- Surfaces should feel flat, poster-like, and slightly imperfect rather than
+  polished or soft
+- Controls should look tangible and graphic, with obvious states and
+  high-contrast affordances
+- Decorative linework, badges, rating motifs, and abstract character elements
+  are appropriate when they support the page composition
+- Layouts should feel editorial and intentionally composed, with generous
+  negative space and bold framing
+- Avoid glassy effects, muted enterprise dashboards, or minimal neutral UI
+  patterns
+
 ## System Shape
 
 The application has three primary surfaces:
