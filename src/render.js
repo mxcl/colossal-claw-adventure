@@ -603,7 +603,7 @@ function renderRedirectingPage(rootPath) {
           If you have a saved page on this device, it will open first. If not,
           the story starts from the canonical root.
         </p>
-        <a class="primary-btn" href="${escapeHtml(rootPath)}">Open root page</a>
+        <a class="primary-btn" href="${escapeHtml(rootPath)}">Begin Story</a>
       </main>
       <script>
         (() => {
