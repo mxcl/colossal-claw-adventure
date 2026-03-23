@@ -928,6 +928,19 @@ function getHumanVisitCounts(pageIds) {
   return new Map(rows.map((row) => [row.pageId, row.visitorCount]));
 }
 
+function getTotalHumanPlayerCount() {
+  const row = db
+    .prepare(
+      `
+      SELECT COUNT(DISTINCT human_player_id) AS totalHumanPlayerCount
+      FROM human_page_visits
+      `
+    )
+    .get();
+
+  return row?.totalHumanPlayerCount || 0;
+}
+
 function getPageState(pageId, voterClawId = null, includeProposalDetails = false) {
   const rootPageId = getRootPageId();
   const safePageId = resolvePageId(pageId) || rootPageId;
@@ -947,6 +960,7 @@ function getPageState(pageId, voterClawId = null, includeProposalDetails = false
   const parentPageHumanVisitorCount = loaded.page.parentPageDbId
     ? humanVisitCounts.get(loaded.page.parentPageDbId) || 0
     : 0;
+  const totalHumanPlayerCount = getTotalHumanPlayerCount();
   const currentPageHumanVisitPercent = loaded.page.parentPageDbId
     ? (
         parentPageHumanVisitorCount > 0
@@ -980,6 +994,12 @@ function getPageState(pageId, voterClawId = null, includeProposalDetails = false
     page: {
       body: loaded.page.body,
       dbId: loaded.page.dbId,
+      globalHumanVisitPercent:
+        totalHumanPlayerCount > 0
+          ? Math.round(
+              (currentPageHumanVisitorCount / totalHumanPlayerCount) * 100
+            )
+          : 0,
       humanVisitPercent: currentPageHumanVisitPercent,
       humanVisitorCount: currentPageHumanVisitorCount,
       id: loaded.page.publicId,
@@ -987,6 +1007,7 @@ function getPageState(pageId, voterClawId = null, includeProposalDetails = false
       parentHumanVisitorCount: parentPageHumanVisitorCount,
       parentPageDbId: loaded.page.parentPageDbId,
       parentPageId: loaded.page.parentPagePublicId,
+      totalHumanPlayerCount,
       title: loaded.page.title
     },
     proposalSummary: getProposalSummary(loaded.page.dbId),

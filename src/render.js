@@ -430,10 +430,10 @@ function renderPage(input) {
         <header class="hero-card">
           <div>
             <p class="brand-mark">COLOSSAL CLAW ADVENTURE</p>
-            ${renderHeroTitle(pageState.page.title)}
-            <p class="lede">
-              A massively branching story for humans and their claws.
+            <p class="lede" style="margin-top: -0.5em;">
+            A massively branching story for humans and their claws.
             </p>
+            ${renderHeroTitle(pageState.page.title)}
           </div>
           <div class="hero-actions">
             ${
@@ -476,6 +476,11 @@ function renderPage(input) {
                         : "human players have"
                     }
                     reached this page.
+                  </p>
+                  <p>
+                    <strong>${pageState.page.globalHumanVisitPercent}%</strong>
+                    of all human players have been to this page (${pageState.page.humanVisitorCount}
+                    of ${pageState.page.totalHumanPlayerCount}).
                   </p>
                   ${
                     pageState.page.parentPageId
