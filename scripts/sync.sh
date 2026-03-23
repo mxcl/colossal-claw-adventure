@@ -14,13 +14,6 @@ REMOTE_TMP_PATH="/tmp/${APP_NAME}.sync.sqlite"
 usage() {
   cat <<EOF
 Usage: scripts/sync.sh [pull|push] [user@host]
-
-Environment overrides:
-  DEPLOY_HOST         Default SSH target if no positional host is given
-  DEPLOY_PORT         SSH port (default: 22)
-  LOCAL_DB_PATH       Local SQLite path
-  REMOTE_DB_PATH      Remote SQLite path
-  REMOTE_SERVICE      Remote systemd service name for push operations
 EOF
 }
 
@@ -53,15 +46,12 @@ pull_db() {
 
   ssh -p "${DEPLOY_PORT}" "${REMOTE}" \
     "set -euo pipefail
-     sqlite3 '${REMOTE_DB_PATH}' \
-       \".backup '${REMOTE_TMP_PATH}'\""
+     sqlite3 '${REMOTE_DB_PATH}' \".backup '${REMOTE_TMP_PATH}'\""
 
   rsync -az -e "ssh -p ${DEPLOY_PORT}" \
     "${REMOTE}:${REMOTE_TMP_PATH}" "${LOCAL_DB_PATH}"
 
-  ssh -p "${DEPLOY_PORT}" "${REMOTE}" \
-    "rm -f '${REMOTE_TMP_PATH}'"
-
+  ssh -p "${DEPLOY_PORT}" "${REMOTE}" "rm -f '${REMOTE_TMP_PATH}'"
   rm -f "${LOCAL_DB_PATH}-shm" "${LOCAL_DB_PATH}-wal"
   echo "Pulled ${REMOTE_DB_PATH} to ${LOCAL_DB_PATH}"
 }

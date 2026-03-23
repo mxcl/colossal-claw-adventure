@@ -16,9 +16,9 @@ Usage: scripts/deploy.sh [user@host]
 
 Environment overrides:
   DEPLOY_HOST         Default SSH target if no positional host is given
-  DEPLOY_PORT         SSH port (default: 22)
+  DEPLOY_PORT         SSH port
   REMOTE_APP_DIR      Remote app directory
-  REMOTE_DATA_DIR     Remote SQLite data directory
+  REMOTE_DATA_DIR     Remote data directory
   REMOTE_ENV_FILE     Remote environment file
   REMOTE_SERVICE      Remote systemd service name
 EOF
@@ -44,14 +44,9 @@ ssh -p "${DEPLOY_PORT}" "${REMOTE}" \
 
 rsync -az --delete \
   --exclude ".git/" \
-  --exclude ".next/" \
-  --exclude "data/" \
   --exclude "node_modules/" \
+  --exclude "data/" \
   --exclude ".env*" \
-  --exclude "*.sqlite" \
-  --exclude "*.sqlite-shm" \
-  --exclude "*.sqlite-wal" \
-  --exclude "npm-debug.log*" \
   -e "ssh -p ${DEPLOY_PORT}" \
   "${ROOT_DIR}/" "${REMOTE}:${REMOTE_APP_DIR}/"
 
@@ -71,19 +66,6 @@ if command -v sudo >/dev/null 2>&1; then
   SUDO="sudo"
 fi
 
-require_remote_cmd() {
-  if ! command -v "\$1" >/dev/null 2>&1; then
-    echo "Missing required command on remote host: \$1" >&2
-    exit 1
-  fi
-}
-
-require_remote_cmd node
-require_remote_cmd npm
-require_remote_cmd rsync
-require_remote_cmd sqlite3
-require_remote_cmd systemctl
-
 \$SUDO mkdir -p "\$APP_DIR" "\$DATA_DIR"
 \$SUDO chown -R "\$APP_USER:\$APP_GROUP" "\$APP_DIR" "\$DATA_DIR"
 
@@ -96,8 +78,7 @@ if ! \$SUDO grep -q '^SQLITE_DB_PATH=' "\$ENV_FILE"; then
     \$SUDO tee -a "\$ENV_FILE" >/dev/null
 fi
 
-cat <<SERVICE | \$SUDO tee "/etc/systemd/system/\${SERVICE_NAME}.service" \
-  >/dev/null
+cat <<SERVICE | \$SUDO tee "/etc/systemd/system/\${SERVICE_NAME}.service" >/dev/null
 [Unit]
 Description=Colossal Claw Adventure
 After=network.target
@@ -118,15 +99,12 @@ SERVICE
 
 cd "\$APP_DIR"
 npm ci
-npm run build
 
 \$SUDO systemctl daemon-reload
 \$SUDO systemctl enable "\$SERVICE_NAME" >/dev/null
 \$SUDO systemctl restart "\$SERVICE_NAME"
-\$SUDO systemctl --no-pager --full status "\$SERVICE_NAME" | \
-  sed -n '1,12p'
+\$SUDO systemctl --no-pager --full status "\$SERVICE_NAME" | sed -n '1,12p'
 EOF
 )
 
-printf '%s\n' "${remote_script}" | \
-  ssh -p "${DEPLOY_PORT}" "${REMOTE}" 'bash -s'
+printf '%s\n' "${remote_script}" | ssh -p "${DEPLOY_PORT}" "${REMOTE}" 'bash -s'
