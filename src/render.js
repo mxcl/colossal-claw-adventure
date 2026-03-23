@@ -28,6 +28,20 @@ function renderNotice(notice) {
   return `<div class="notice-panel">${escapeHtml(notice)}</div>`;
 }
 
+function renderHeroTitle(title) {
+  const safeTitle = escapeHtml(title);
+
+  if (title === "Uncharted Path") {
+    return `
+      <h1 class="hero-title glitch-title" data-text="${safeTitle}">
+        ${safeTitle}
+      </h1>
+    `;
+  }
+
+  return `<h1 class="hero-title">${safeTitle}</h1>`;
+}
+
 function fakeClawVisitPercent(pageId, humanVisitPercent) {
   const basis = String(pageId || "");
   let hash = 0;
@@ -411,7 +425,7 @@ function renderPage(input) {
         <header class="hero-card">
           <div>
             <p class="brand-mark">COLOSSAL CLAW ADVENTURE</p>
-            <h1>${escapeHtml(pageState.page.title)}</h1>
+            ${renderHeroTitle(pageState.page.title)}
             <p class="lede">
               A massively branching story for humans and their claws.
             </p>
@@ -435,45 +449,44 @@ function renderPage(input) {
           </div>
         </header>
         ${renderNotice(notice)}
-        <section class="story-grid">
-          <article class="panel story-panel">
-            <div class="panel-head">
-              <span class="eyebrow">Story</span>
-            </div>
-            <div class="story-copy markdown-body">
-              ${renderMarkdown(pageState.page.body, {
-                stripHeadingText: pageState.page.title
-              })}
-            </div>
-            <div class="page-meta">
-              ${
-                pageState.page.parentPageId
-                  ? `<span class="status-chip">
-                      ${pageState.page.humanVisitPercent}% of human players
-                      visited this branch
-                    </span>`
-                  : ""
-              }
-              ${
-                isBranchEnd
-                  ? `<span class="status-chip status-chip-warning">Branch end</span>`
-                  : ""
-              }
-            </div>
-          </article>
-          <aside class="panel side-panel">
-            <span class="eyebrow">Traffic</span>
-            <h2>Who has been here</h2>
-            <p>
-              <strong>${pageState.page.humanVisitPercent}% of human players</strong>
-              reached this page.
-            </p>
-            <p>
-              <strong>${fakeClawPercent}% of claws</strong> passed through this
-              route.
-            </p>
-          </aside>
-        </section>
+        ${
+          isBranchEnd
+            ? ""
+            : `<section class="story-grid">
+                <article class="panel story-panel">
+                  <div class="panel-head">
+                    <span class="eyebrow">Story</span>
+                  </div>
+                  <div class="story-copy markdown-body">
+                    ${renderMarkdown(pageState.page.body, {
+                      stripHeadingText: pageState.page.title
+                    })}
+                  </div>
+                  <div class="page-meta">
+                    ${
+                      pageState.page.parentPageId
+                        ? `<span class="status-chip">
+                            ${pageState.page.humanVisitPercent}% of human players
+                            visited this branch
+                          </span>`
+                        : ""
+                    }
+                  </div>
+                </article>
+                <aside class="panel side-panel">
+                  <span class="eyebrow">Traffic</span>
+                  <h2>Who has been here</h2>
+                  <p>
+                    <strong>${pageState.page.humanVisitPercent}% of human players</strong>
+                    reached this page.
+                  </p>
+                  <p>
+                    <strong>${fakeClawPercent}% of claws</strong> passed through this
+                    route.
+                  </p>
+                </aside>
+              </section>`
+        }
         ${renderStoryOptions(pageState.options)}
         ${showBranchEndPanel ? renderBranchEndPanel(pageState, byoclawHref) : ""}
         ${renderSiteFooter()}
