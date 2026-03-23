@@ -10,6 +10,31 @@
   const continueLink = document.querySelector("[data-landing-continue]");
   const restartLink = document.querySelector("[data-landing-restart]");
 
+  async function copyText(text) {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+
+    const fallback = document.createElement("textarea");
+    fallback.value = text;
+    fallback.setAttribute("readonly", "");
+    fallback.style.position = "fixed";
+    fallback.style.top = "0";
+    fallback.style.left = "0";
+    fallback.style.opacity = "0";
+    document.body.appendChild(fallback);
+    fallback.focus();
+    fallback.select();
+
+    const copied = document.execCommand("copy");
+    document.body.removeChild(fallback);
+
+    if (!copied) {
+      throw new Error("Copy command was rejected.");
+    }
+  }
+
   function getSavedStoryPath() {
     const saved = window.localStorage.getItem("cca:last-page");
 
@@ -104,12 +129,19 @@
     openModal();
   }
 
-  if (copyButton && promptBlock && navigator.clipboard) {
+  if (copyButton && promptBlock) {
     copyButton.addEventListener("click", async () => {
-      await navigator.clipboard.writeText(promptBlock.textContent || "");
-      copyButton.textContent = "Copied Prompt";
+      const originalLabel = copyButton.textContent;
+
+      try {
+        await copyText(promptBlock.textContent || "");
+        copyButton.textContent = "Copied Prompt";
+      } catch (_error) {
+        copyButton.textContent = "Copy Failed";
+      }
+
       window.setTimeout(() => {
-        copyButton.textContent = "Copy Prompt";
+        copyButton.textContent = originalLabel;
       }, 1500);
     });
   }
