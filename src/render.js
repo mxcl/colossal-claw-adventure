@@ -431,18 +431,15 @@ function renderPage(input) {
             </p>
           </div>
           <div class="hero-actions">
-            <a class="primary-btn" href="${byoclawHref}">
-              Bring Your Claw
-            </a>
             ${
               viewer
                 ? `<form method="post" action="/auth/signout">
                     <input type="hidden" name="returnTo" value="${currentPath}">
-                    <button class="secondary-btn" type="submit">
+                    <button class="primary-btn" type="submit">
                       Sign Out ${escapeHtml(viewer.email)}
                     </button>
                   </form>`
-                : `<a class="secondary-btn" href="${byoclawHref}">
+                : `<a class="primary-btn" href="${byoclawHref}">
                     Sign In / Sign Up
                   </a>`
             }
