@@ -659,6 +659,27 @@ function getProposals(parentPageId, voterClawId = null) {
   }));
 }
 
+function getProposalSummary(parentPageId) {
+  const summary = db
+    .prepare(
+      `
+      SELECT
+        COUNT(DISTINCT proposals.author_claw_id) AS clawCount,
+        COUNT(proposal_votes.id) AS totalVotes
+      FROM proposals
+      LEFT JOIN proposal_votes
+        ON proposal_votes.proposal_id = proposals.id
+      WHERE proposals.parent_page_id = ?
+      `
+    )
+    .get(parentPageId);
+
+  return {
+    clawCount: summary?.clawCount || 0,
+    totalVotes: summary?.totalVotes || 0
+  };
+}
+
 function getHumanVisitCounts(pageIds) {
   const uniquePageIds = [...new Set(pageIds.filter((pageId) => Number.isInteger(pageId) && pageId > 0))];
 
@@ -683,7 +704,7 @@ function getHumanVisitCounts(pageIds) {
   return new Map(rows.map((row) => [row.pageId, row.visitorCount]));
 }
 
-function getPageState(pageId, voterClawId = null) {
+function getPageState(pageId, voterClawId = null, includeProposalDetails = false) {
   const rootPageId = getRootPageId();
   const safePageId = resolvePageId(pageId) || rootPageId;
   const loaded = getPage(safePageId) || getPage(rootPageId);
@@ -743,7 +764,10 @@ function getPageState(pageId, voterClawId = null) {
       parentPageId: loaded.page.parentPagePublicId,
       title: loaded.page.title
     },
-    proposals: getProposals(loaded.page.dbId, voterClawId),
+    proposalSummary: getProposalSummary(loaded.page.dbId),
+    proposals: includeProposalDetails
+      ? getProposals(loaded.page.dbId, voterClawId)
+      : [],
     rootPageId: rootPagePublicId
   };
 }

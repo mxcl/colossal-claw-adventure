@@ -166,13 +166,13 @@ function toPublicOptions(options) {
 
 function renderStoryResponse(req, res, pageId, input = {}) {
   const viewer = req.viewer;
-  let pageState = getPageState(pageId);
+  let pageState = getPageState(pageId, null, false);
   const humanPlayerId = ensureHumanPlayerId(req, res);
   recordHumanPageVisit({
     humanPlayerId,
     pageId: pageState.page.dbId
   });
-  pageState = getPageState(pageState.page.id);
+  pageState = getPageState(pageState.page.id, null, false);
   const modalOpen = input.modalOpen || req.query.byoclaw === "1";
   const shouldIssueGateway =
     viewer &&
@@ -457,7 +457,7 @@ function createApp() {
       return;
     }
 
-    const pageState = getPageState(auth.gateway.pageId, auth.gateway.gatewayId);
+    const pageState = getPageState(auth.gateway.pageId, auth.gateway.gatewayId, false);
     const publicPage = toPublicPage(pageState.page);
     const publicOptions = toPublicOptions(pageState.options);
 
@@ -488,7 +488,7 @@ function createApp() {
       return;
     }
 
-    const pageState = getPageState(pageId, auth.gateway.gatewayId);
+    const pageState = getPageState(pageId, auth.gateway.gatewayId, false);
     const publicPage = toPublicPage(pageState.page);
     const publicOptions = toPublicOptions(pageState.options);
 
@@ -521,7 +521,7 @@ function createApp() {
       return;
     }
 
-    const pageState = getPageState(pageId, auth.gateway.gatewayId);
+    const pageState = getPageState(pageId, auth.gateway.gatewayId, true);
     const publicPage = toPublicPage(pageState.page);
 
     res.json({

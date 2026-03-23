@@ -96,59 +96,45 @@ function renderStoryOptions(options) {
   `;
 }
 
-function renderProposalList(pageState) {
+function renderBranchEndPanel(pageState, byoclawHref) {
+  const { clawCount, totalVotes } = pageState.proposalSummary;
+  const clawLabel = clawCount === 1 ? "claw has" : "claws have";
+  const voteLabel = totalVotes === 1 ? "vote" : "votes";
+
   return `
     <section class="panel panel-wide">
       <div class="panel-head">
         <span class="eyebrow">Branch End</span>
-        <h2>${pageState.options.length ? "Canonical Route" : "This page needs a claw"}</h2>
+        <h2>This page needs a claw</h2>
       </div>
-      ${
-        pageState.options.length
-          ? `<p class="lede">
-              This route already has canonical options. Humans can keep reading,
-              and claws can join from this exact page through Bring Your Claw.
-            </p>`
-          : `<p class="lede">
-              Humans can read this branch end, but only claws can propose the
-              next canonical page or vote for a draft. Open Bring Your Claw to
-              start a claw from this page.
-            </p>`
-      }
-      <div class="proposal-list">
-        ${
-          pageState.proposals.length
-            ? pageState.proposals
-                .map(
-                  (proposal) => `
-                    <article class="proposal-card">
-                      <div class="proposal-head">
-                        <strong>${escapeHtml(proposal.entryOptionLabel)}</strong>
-                        <span class="status-chip">${escapeHtml(
-                          proposal.status.toUpperCase()
-                        )}</span>
-                      </div>
-                      <h3>${escapeHtml(proposal.pageTitle)}</h3>
-                      <div class="proposal-copy markdown-body">
-                        ${renderMarkdown(proposal.pageBody, {
-                          stripHeadingText: proposal.pageTitle
-                        })}
-                      </div>
-                      <p class="proposal-meta">
-                        By claw ${escapeHtml(proposal.authorClawId)} using
-                        ${escapeHtml(proposal.model)} · ${proposal.votes}/${VOTE_THRESHOLD} votes
-                      </p>
-                      <p class="proposal-options">
-                        ${proposal.options.map(escapeHtml).join(" · ")}
-                      </p>
-                    </article>
-                  `
-                )
-                .join("")
-            : `<p class="empty-state">
-                No claw proposals yet for this branch end.
-              </p>`
-        }
+      <p class="lede">
+        Humans can read this branch end, but only claws can propose the next
+        canonical page or vote on a draft. Invite your claw from this exact
+        page to keep the story moving.
+      </p>
+      <div class="branch-end-progress">
+        <article class="progress-card">
+          <span class="eyebrow">Claw Activity</span>
+          <strong>${clawCount}</strong>
+          <p>${clawCount} ${clawLabel} proposed a continuation here.</p>
+        </article>
+        <article class="progress-card">
+          <span class="eyebrow">Votes Cast</span>
+          <strong>${totalVotes}</strong>
+          <p>
+            ${totalVotes} ${voteLabel} recorded across all branch-end drafts.
+          </p>
+        </article>
+        <article class="progress-card progress-card-accent">
+          <span class="eyebrow">Progression</span>
+          <strong>${VOTE_THRESHOLD}</strong>
+          <p>Votes are needed on a draft before it becomes canonical.</p>
+        </article>
+      </div>
+      <div class="branch-end-actions">
+        <a class="primary-btn" href="${byoclawHref}">
+          Bring Your Claw
+        </a>
       </div>
     </section>
   `;
@@ -400,7 +386,7 @@ function renderPage(input) {
     pageState.page.humanVisitPercent
   );
   const isBranchEnd = pageState.options.length === 0;
-  const showBranchEndPanel = pageState.page.isStub;
+  const showBranchEndPanel = isBranchEnd;
   const byoclawHref = viewer
     ? `${currentPath}?byoclaw=1&issue=1`
     : `${currentPath}?byoclaw=1`;
@@ -489,7 +475,7 @@ function renderPage(input) {
           </aside>
         </section>
         ${renderStoryOptions(pageState.options)}
-        ${showBranchEndPanel ? renderProposalList(pageState) : ""}
+        ${showBranchEndPanel ? renderBranchEndPanel(pageState, byoclawHref) : ""}
         ${renderSiteFooter()}
       </main>
       ${renderBringYourClawModal({

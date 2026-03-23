@@ -543,7 +543,8 @@ textarea {
 
 .page-meta,
 .proposal-head,
-.claw-card-head {
+.claw-card-head,
+.branch-end-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 0.75rem;
@@ -568,6 +569,7 @@ textarea {
 
 .option-grid,
 .proposal-list,
+.branch-end-progress,
 .modal-grid,
 .claw-list,
 .button-row {
@@ -594,6 +596,7 @@ textarea {
 
 .option-card,
 .proposal-card,
+.progress-card,
 .auth-card,
 .claw-card {
   display: block;
@@ -605,11 +608,30 @@ textarea {
 
 .option-card strong,
 .proposal-card h3,
+.progress-card strong,
 .auth-card h3,
 .claw-card h3 {
   display: block;
   font-size: 1.15rem;
   margin: 0 0 0.45rem;
+}
+
+.progress-card strong {
+  font-size: clamp(2rem, 5vw, 3rem);
+  line-height: 0.9;
+}
+
+.progress-card p {
+  margin: 0;
+}
+
+.progress-card-accent {
+  background: var(--cream);
+}
+
+.branch-end-actions {
+  justify-content: flex-start;
+  margin-top: 1rem;
 }
 
 .option-meta,
