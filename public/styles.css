@@ -272,16 +272,25 @@ textarea {
   line-height: 1.5;
 }
 
-.landing-footer {
+.landing-footer,
+.site-footer {
   display: flex;
   flex-wrap: wrap;
   justify-content: space-between;
+  align-items: center;
   gap: 1rem;
   padding-top: 1.75rem;
   padding-bottom: 2rem;
 }
 
-.landing-footer a {
+.landing-footer p,
+.site-footer p {
+  margin: 0;
+  font-weight: 700;
+}
+
+.landing-footer a,
+.site-footer a {
   font-weight: 800;
   text-decoration-thickness: 0.16em;
   text-underline-offset: 0.22em;
@@ -672,6 +681,10 @@ textarea {
   display: grid;
   place-items: center;
   padding: 1.5rem;
+}
+
+.site-footer {
+  margin-top: 1.5rem;
 }
 
 .redirect-card {

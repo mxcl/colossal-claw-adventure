@@ -28,6 +28,27 @@ function renderNotice(notice) {
   return `<div class="notice-panel">${escapeHtml(notice)}</div>`;
 }
 
+function renderSiteFooter(footerClass = "site-footer", extraLinks = "") {
+  const year = new Date().getFullYear();
+
+  return `
+    <footer class="${escapeHtml(footerClass)}">
+      <p>
+        &copy; ${year} Colossal Claw Adventure. Created by
+        <a href="https://mxcl.dev" target="_blank" rel="noreferrer">mxcl</a>.
+      </p>
+      <a
+        href="https://github.com/mxcl/colossal-claw-adventure"
+        target="_blank"
+        rel="noreferrer"
+      >
+        GitHub
+      </a>
+      ${extraLinks}
+    </footer>
+  `;
+}
+
 function renderStoryOptions(options) {
   if (!options.length) {
     return "";
@@ -437,6 +458,7 @@ function renderPage(input) {
         </section>
         ${renderStoryOptions(pageState.options)}
         ${renderProposalList(pageState)}
+        ${renderSiteFooter()}
       </main>
       ${renderBringYourClawModal({
         ...modal,
@@ -505,14 +527,12 @@ function renderLandingPage(rootPath, pageCount) {
             you and your Claw can impact the story one page at a time.
           </p>
         </section>
-        <footer class="landing-footer">
-          <a href="https://mxcl.dev" target="_blank" rel="noreferrer">
-            mxcl.dev
-          </a>
-          <a href="https://byoclaw.dev" target="_blank" rel="noreferrer">
+        ${renderSiteFooter(
+          "landing-footer",
+          `<a href="https://byoclaw.dev" target="_blank" rel="noreferrer">
             byoclaw.dev
-          </a>
-        </footer>
+          </a>`
+        )}
       </main>
     </body>
   </html>`;
