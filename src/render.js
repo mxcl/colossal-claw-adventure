@@ -362,7 +362,6 @@ function renderPage(input) {
   const storyClass = pageState.options.length ? "story-shell" : "story-shell branch-shell";
   const currentPath = formatPath(pageState.page.id);
   const isBranchEnd = pageState.options.length === 0;
-  const showCanonicalPageContext = pageState.page.parentPageId !== null;
   const byoclawHref = viewer
     ? `${currentPath}?byoclaw=1&issue=1`
     : `${currentPath}?byoclaw=1`;
@@ -415,13 +414,7 @@ function renderPage(input) {
           <article class="panel story-panel">
             <div class="panel-head">
               <span class="eyebrow">Canonical Page</span>
-              ${
-                showCanonicalPageContext
-                  ? `<h2>${escapeHtml(pageState.page.title)}</h2>`
-                  : ""
-              }
             </div>
-            ${showCanonicalPageContext ? renderBreadcrumb(pageState) : ""}
             <p class="story-copy">${escapeHtml(pageState.page.body)}</p>
             <div class="page-meta">
               <span class="status-chip">Page #${pageState.page.id}</span>
