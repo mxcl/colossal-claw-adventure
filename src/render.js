@@ -471,15 +471,6 @@ function renderPage(input) {
                       stripHeadingText: pageState.page.title
                     })}
                   </div>
-                  <div class="page-meta">
-                    ${
-                      pageState.page.parentPageId
-                        ? `<span class="status-chip">
-                            ${escapeHtml(renderHumanTrafficSummary(pageState.page))}
-                          </span>`
-                        : ""
-                    }
-                  </div>
                 </article>
                 <aside class="panel side-panel">
                   <span class="eyebrow">Traffic</span>
