@@ -1,6 +1,7 @@
 const crypto = require("node:crypto");
 
 const { SESSION_COOKIE_NAME } = require("./env");
+const HUMAN_PLAYER_COOKIE_NAME = "cca_human";
 
 function randomToken(bytes = 24) {
   return crypto.randomBytes(bytes).toString("hex");
@@ -118,6 +119,18 @@ function clearSessionCookie(res) {
   );
 }
 
+function setHumanPlayerCookie(res, token) {
+  appendSetCookie(
+    res,
+    serializeCookie(HUMAN_PLAYER_COOKIE_NAME, token, {
+      httpOnly: true,
+      maxAge: 60 * 60 * 24 * 365 * 5,
+      sameSite: "Lax",
+      secure: process.env.NODE_ENV === "production"
+    })
+  );
+}
+
 function buildSessionRecord(userId) {
   const token = randomToken();
   const tokenHash = hashToken(token);
@@ -136,9 +149,11 @@ module.exports = {
   clearSessionCookie,
   hashPassword,
   hashToken,
+  HUMAN_PLAYER_COOKIE_NAME,
   parseCookies,
   randomBase64UrlToken,
   randomToken,
+  setHumanPlayerCookie,
   setSessionCookie,
   verifyPassword
 };

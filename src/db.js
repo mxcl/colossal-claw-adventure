@@ -132,6 +132,18 @@ function createDatabase() {
       FOREIGN KEY(user_id) REFERENCES users(id),
       FOREIGN KEY(page_id) REFERENCES story_pages(id)
     );
+
+    CREATE TABLE IF NOT EXISTS human_page_visits (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      human_player_id TEXT NOT NULL,
+      page_id INTEGER NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(human_player_id, page_id),
+      FOREIGN KEY(page_id) REFERENCES story_pages(id)
+    );
+
+    CREATE INDEX IF NOT EXISTS human_page_visits_page_id_idx
+      ON human_page_visits(page_id);
   `);
 
   migrateGatewayForeignKeys(db);
@@ -512,6 +524,30 @@ function getProposals(parentPageId, voterClawId = null) {
   }));
 }
 
+function getHumanVisitCounts(pageIds) {
+  const uniquePageIds = [...new Set(pageIds.filter((pageId) => Number.isInteger(pageId) && pageId > 0))];
+
+  if (!uniquePageIds.length) {
+    return new Map();
+  }
+
+  const placeholders = uniquePageIds.map(() => "?").join(", ");
+  const rows = db
+    .prepare(
+      `
+      SELECT
+        page_id AS pageId,
+        COUNT(*) AS visitorCount
+      FROM human_page_visits
+      WHERE page_id IN (${placeholders})
+      GROUP BY page_id
+      `
+    )
+    .all(...uniquePageIds);
+
+  return new Map(rows.map((row) => [row.pageId, row.visitorCount]));
+}
+
 function getPageState(pageId, voterClawId = null) {
   const rootPageId = getRootPageId();
   const safePageId = Number.isInteger(pageId) ? pageId : rootPageId;
@@ -521,10 +557,25 @@ function getPageState(pageId, voterClawId = null) {
     throw new Error("Unable to load the story.");
   }
 
+  const humanVisitCounts = getHumanVisitCounts([
+    loaded.page.id,
+    ...loaded.options.map((option) => option.targetPageId)
+  ]);
+  const currentPageHumanVisitorCount = humanVisitCounts.get(loaded.page.id) || 0;
+
   return {
     breadcrumb: getBreadcrumb(loaded.page.id),
     currentPageId: loaded.page.id,
     options: loaded.options.map((option) => ({
+      humanVisitCount: humanVisitCounts.get(option.targetPageId) || 0,
+      humanVisitPercent:
+        currentPageHumanVisitorCount > 0
+          ? Math.round(
+              ((humanVisitCounts.get(option.targetPageId) || 0) /
+                currentPageHumanVisitorCount) *
+                100
+            )
+          : 0,
       id: option.id,
       label: option.label,
       targetIsStub: option.targetIsStub === 1,
@@ -533,6 +584,7 @@ function getPageState(pageId, voterClawId = null) {
     })),
     page: {
       body: loaded.page.body,
+      humanVisitorCount: currentPageHumanVisitorCount,
       id: loaded.page.id,
       isStub: loaded.page.isStub === 1,
       title: loaded.page.title
@@ -540,6 +592,15 @@ function getPageState(pageId, voterClawId = null) {
     proposals: getProposals(loaded.page.id, voterClawId),
     rootPageId
   };
+}
+
+function recordHumanPageVisit({ humanPlayerId, pageId }) {
+  db.prepare(
+    `
+    INSERT OR IGNORE INTO human_page_visits (human_player_id, page_id)
+    VALUES (?, ?)
+    `
+  ).run(humanPlayerId, pageId);
 }
 
 function createUser({ email, passwordHash, passwordSalt }) {
@@ -1127,26 +1188,27 @@ function castVote({ clawId, proposalId }) {
 }
 
 module.exports = {
+  castVote,
   createClaw,
   createProposal,
   createSession,
   createUser,
   deleteSession,
-  findGatewayByTokenHash,
   findClawForAuth,
+  findGatewayByTokenHash,
   getPageState,
-  getStoryPageCount,
   getRootPageId,
+  getStoryPageCount,
   getUserByEmail,
   getUserById,
   getUserBySessionToken,
   hasVoted,
   issueClawGateway,
-  listClawsForUser,
   listActiveGatewaysForUser,
+  listClawsForUser,
+  recordHumanPageVisit,
   registerClawNonce,
   revokeGateway,
   rotateClawToken,
-  updateClawContext,
-  castVote
+  updateClawContext
 };

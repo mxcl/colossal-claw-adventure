@@ -5,8 +5,10 @@ const {
   clearSessionCookie,
   hashPassword,
   hashToken,
+  HUMAN_PLAYER_COOKIE_NAME,
   parseCookies,
   randomBase64UrlToken,
+  setHumanPlayerCookie,
   setSessionCookie,
   verifyPassword
 } = require("./auth");
@@ -24,6 +26,7 @@ const {
   getUserBySessionToken,
   issueClawGateway,
   listActiveGatewaysForUser,
+  recordHumanPageVisit,
   revokeGateway
 } = require("./db");
 const {
@@ -137,9 +140,28 @@ function buildGatewayDetails(pageId, userId) {
   };
 }
 
+function ensureHumanPlayerId(req, res) {
+  const existing = req.cookies[HUMAN_PLAYER_COOKIE_NAME];
+
+  if (existing) {
+    return existing;
+  }
+
+  const humanPlayerId = randomBase64UrlToken(18, "cca_human_");
+  setHumanPlayerCookie(res, humanPlayerId);
+  req.cookies[HUMAN_PLAYER_COOKIE_NAME] = humanPlayerId;
+  return humanPlayerId;
+}
+
 function renderStoryResponse(req, res, pageId, input = {}) {
   const viewer = req.viewer;
-  const pageState = getPageState(pageId);
+  let pageState = getPageState(pageId);
+  const humanPlayerId = ensureHumanPlayerId(req, res);
+  recordHumanPageVisit({
+    humanPlayerId,
+    pageId: pageState.page.id
+  });
+  pageState = getPageState(pageState.page.id);
   const modalOpen = input.modalOpen || req.query.byoclaw === "1";
   const shouldIssueGateway =
     viewer &&

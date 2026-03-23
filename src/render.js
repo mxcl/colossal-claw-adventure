@@ -74,6 +74,10 @@ function renderStoryOptions(options) {
                       : `Leads to ${escapeHtml(option.targetTitle)}`
                   }
                 </span>
+                <span class="option-traffic">
+                  ${option.humanVisitPercent}% of human players who reached
+                  this page visited this branch.
+                </span>
               </a>
             `
           )
