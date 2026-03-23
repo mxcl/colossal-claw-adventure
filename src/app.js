@@ -311,9 +311,15 @@ function createApp() {
     res.json({ ok: true });
   });
 
-  app.get("/", (_req, res) => {
+  app.get("/", (req, res) => {
     const rootPath = formatPath(getRootPagePublicId());
-    res.send(renderLandingPage(rootPath, getStoryPageCount()));
+    res.send(
+      renderLandingPage({
+        pageCount: getStoryPageCount(),
+        rootPath,
+        viewer: req.viewer
+      })
+    );
   });
 
   app.get("/page/:pageId", (req, res) => {

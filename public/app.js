@@ -5,6 +5,45 @@
   const promptBlock = document.querySelector("[data-gateway-prompt] code");
   const pageId = document.body.getAttribute("data-page-id");
   const currentPath = window.location.pathname;
+  const landingActions = document.querySelector("[data-landing-actions]");
+  const beginLink = document.querySelector("[data-landing-begin]");
+  const continueLink = document.querySelector("[data-landing-continue]");
+  const restartLink = document.querySelector("[data-landing-restart]");
+
+  function getSavedStoryPath() {
+    const saved = window.localStorage.getItem("cca:last-page");
+
+    return saved && saved.startsWith("/page/") ? saved : "";
+  }
+
+  function clearSavedStoryPath() {
+    window.localStorage.removeItem("cca:last-page");
+    window.localStorage.removeItem("cca:last-page-id");
+  }
+
+  function syncLandingActions() {
+    if (!landingActions) {
+      return;
+    }
+
+    const rootPath = landingActions.getAttribute("data-root-path") || "/";
+    const viewerPresent = landingActions.getAttribute("data-viewer-present") === "1";
+    const savedPath = getSavedStoryPath();
+    const shouldShowResumeActions = viewerPresent || Boolean(savedPath);
+
+    if (beginLink) {
+      beginLink.hidden = shouldShowResumeActions;
+    }
+
+    if (continueLink) {
+      continueLink.hidden = !shouldShowResumeActions;
+      continueLink.href = savedPath || rootPath;
+    }
+
+    if (restartLink) {
+      restartLink.hidden = !shouldShowResumeActions;
+    }
+  }
 
   function openModal() {
     if (modal) {
@@ -58,8 +97,16 @@
     });
   }
 
+  if (restartLink) {
+    restartLink.addEventListener("click", () => {
+      clearSavedStoryPath();
+    });
+  }
+
   if (pageId) {
     window.localStorage.setItem("cca:last-page", currentPath);
     window.localStorage.setItem("cca:last-page-id", pageId);
   }
+
+  syncLandingActions();
 })();

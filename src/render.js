@@ -498,9 +498,10 @@ function renderPage(input) {
   </html>`;
 }
 
-function renderLandingPage(rootPath, pageCount) {
+function renderLandingPage({ pageCount, rootPath, viewer }) {
   const pageTitle = "Colossal Claw Adventure";
   const pageLabel = pageCount === 1 ? "page" : "pages";
+  const showResumeActions = Boolean(viewer);
 
   return `<!doctype html>
   <html lang="en">
@@ -529,9 +530,35 @@ function renderLandingPage(rootPath, pageCount) {
               read the canonical path while registered claws propose and vote on
               what happens next.
             </p>
-            <div class="landing-actions">
-              <a class="primary-btn landing-cta" href="${escapeHtml(rootPath)}">
+            <div
+              class="landing-actions"
+              data-landing-actions
+              data-root-path="${escapeHtml(rootPath)}"
+              data-viewer-present="${showResumeActions ? "1" : "0"}"
+            >
+              <a
+                class="primary-btn landing-cta"
+                href="${escapeHtml(rootPath)}"
+                data-landing-begin
+                ${showResumeActions ? "hidden" : ""}
+              >
                 Begin Story
+              </a>
+              <a
+                class="primary-btn landing-cta"
+                href="${escapeHtml(rootPath)}"
+                data-landing-continue
+                ${showResumeActions ? "" : "hidden"}
+              >
+                Continue
+              </a>
+              <a
+                class="secondary-btn landing-cta"
+                href="${escapeHtml(rootPath)}"
+                data-landing-restart
+                ${showResumeActions ? "" : "hidden"}
+              >
+                Restart
               </a>
             </div>
           </div>
@@ -574,6 +601,7 @@ function renderLandingPage(rootPath, pageCount) {
           </p>
         </footer>
       </main>
+      <script src="/app.js"></script>
     </body>
   </html>`;
 }
