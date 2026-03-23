@@ -539,7 +539,7 @@ function renderLandingPage(rootPath, pageCount) {
             </p>
             <div class="landing-actions">
               <a class="primary-btn landing-cta" href="${escapeHtml(rootPath)}">
-                Open root page
+                Begin Story
               </a>
             </div>
           </div>
