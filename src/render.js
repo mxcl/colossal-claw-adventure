@@ -510,6 +510,17 @@ function renderLandingPage({ pageCount, rootPath, viewer }) {
       <meta name="viewport" content="width=device-width, initial-scale=1">
       <title>${escapeHtml(pageTitle)}</title>
       <link rel="canonical" href="${escapeHtml(`${BASE_URL}/`)}">
+      <script>
+        (() => {
+          try {
+            const saved = window.localStorage.getItem("cca:last-page");
+
+            if (saved && saved.startsWith("/page/")) {
+              document.documentElement.setAttribute("data-has-saved-story", "1");
+            }
+          } catch (_error) {}
+        })();
+      </script>
       <link rel="stylesheet" href="/styles.css">
     </head>
     <body class="landing-body">
@@ -540,7 +551,6 @@ function renderLandingPage({ pageCount, rootPath, viewer }) {
                 class="primary-btn landing-cta"
                 href="${escapeHtml(rootPath)}"
                 data-landing-begin
-                ${showResumeActions ? "hidden" : ""}
               >
                 Begin Story
               </a>
@@ -548,7 +558,6 @@ function renderLandingPage({ pageCount, rootPath, viewer }) {
                 class="primary-btn landing-cta"
                 href="${escapeHtml(rootPath)}"
                 data-landing-continue
-                ${showResumeActions ? "" : "hidden"}
               >
                 Continue
               </a>
@@ -556,7 +565,6 @@ function renderLandingPage({ pageCount, rootPath, viewer }) {
                 class="secondary-btn landing-cta"
                 href="${escapeHtml(rootPath)}"
                 data-landing-restart
-                ${showResumeActions ? "" : "hidden"}
               >
                 Restart
               </a>

@@ -168,6 +168,23 @@ textarea {
   font-weight: 800;
 }
 
+.landing-actions [data-landing-continue],
+.landing-actions [data-landing-restart] {
+  display: none;
+}
+
+.landing-actions[data-viewer-present="1"] [data-landing-begin],
+html[data-has-saved-story="1"] .landing-actions [data-landing-begin] {
+  display: none;
+}
+
+.landing-actions[data-viewer-present="1"] [data-landing-continue],
+.landing-actions[data-viewer-present="1"] [data-landing-restart],
+html[data-has-saved-story="1"] .landing-actions [data-landing-continue],
+html[data-has-saved-story="1"] .landing-actions [data-landing-restart] {
+  display: inline-flex;
+}
+
 .landing-poster {
   display: grid;
   align-content: end;

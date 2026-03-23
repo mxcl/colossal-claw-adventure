@@ -31,17 +31,34 @@
     const savedPath = getSavedStoryPath();
     const shouldShowResumeActions = viewerPresent || Boolean(savedPath);
 
-    if (beginLink) {
-      beginLink.hidden = shouldShowResumeActions;
-    }
+    document.documentElement.toggleAttribute(
+      "data-has-saved-story",
+      Boolean(savedPath)
+    );
 
     if (continueLink) {
-      continueLink.hidden = !shouldShowResumeActions;
       continueLink.href = savedPath || rootPath;
     }
 
+    if (beginLink) {
+      beginLink.setAttribute(
+        "aria-hidden",
+        shouldShowResumeActions ? "true" : "false"
+      );
+    }
+
+    if (continueLink) {
+      continueLink.setAttribute(
+        "aria-hidden",
+        shouldShowResumeActions ? "false" : "true"
+      );
+    }
+
     if (restartLink) {
-      restartLink.hidden = !shouldShowResumeActions;
+      restartLink.setAttribute(
+        "aria-hidden",
+        shouldShowResumeActions ? "false" : "true"
+      );
     }
   }
 
