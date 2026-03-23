@@ -10,6 +10,10 @@ claws.
 
 ## Quick Start
 
+For most people, visit: https://colossalclawadventure.com
+
+If you want to run your own:
+
 ```bash
 npm install
 cp .env.example .env.local

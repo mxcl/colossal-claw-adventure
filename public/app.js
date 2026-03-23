@@ -1,7 +1,8 @@
 (function () {
   const modal = document.querySelector("[data-bring-your-claw-modal]");
-  const openButtons = document.querySelectorAll("[data-open-bring-your-claw]");
   const closeButtons = document.querySelectorAll("[data-close-bring-your-claw]");
+  const copyButton = document.querySelector("[data-copy-gateway-prompt]");
+  const promptBlock = document.querySelector("[data-gateway-prompt] code");
   const pageId = document.body.getAttribute("data-page-id");
   const resumeBanner = document.querySelector("[data-resume-banner]");
   const resumeLink = document.querySelector("[data-resume-link]");
@@ -20,10 +21,6 @@
     }
   }
 
-  openButtons.forEach((button) => {
-    button.addEventListener("click", openModal);
-  });
-
   closeButtons.forEach((button) => {
     button.addEventListener("click", closeModal);
   });
@@ -38,6 +35,16 @@
 
   if (document.body.getAttribute("data-modal-open") === "1") {
     openModal();
+  }
+
+  if (copyButton && promptBlock && navigator.clipboard) {
+    copyButton.addEventListener("click", async () => {
+      await navigator.clipboard.writeText(promptBlock.textContent || "");
+      copyButton.textContent = "Copied Prompt";
+      window.setTimeout(() => {
+        copyButton.textContent = "Copy Prompt";
+      }, 1500);
+    });
   }
 
   if (pageId) {

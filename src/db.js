@@ -3,7 +3,12 @@ const path = require("node:path");
 
 const Database = require("better-sqlite3");
 
-const { SQLITE_DB_PATH, VOTE_THRESHOLD } = require("./env");
+const {
+  CLAW_GATEWAY_TTL_MINUTES,
+  MAX_ACTIVE_CLAW_GATEWAYS_PER_USER,
+  SQLITE_DB_PATH,
+  VOTE_THRESHOLD
+} = require("./env");
 
 const globalDb = globalThis;
 
@@ -104,6 +109,19 @@ function createDatabase() {
       claw_id TEXT NOT NULL,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       expires_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS claw_gateways (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      gateway_id TEXT NOT NULL UNIQUE,
+      user_id INTEGER NOT NULL,
+      page_id INTEGER NOT NULL,
+      token_hash TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      expires_at TEXT NOT NULL,
+      revoked_at TEXT,
+      FOREIGN KEY(user_id) REFERENCES users(id),
+      FOREIGN KEY(page_id) REFERENCES story_pages(id)
     );
   `);
 
@@ -467,6 +485,150 @@ function getUserBySessionToken(tokenHash) {
 
 function deleteSession(tokenHash) {
   db.prepare("DELETE FROM sessions WHERE token_hash = ?").run(tokenHash);
+}
+
+function cleanupExpiredGateways() {
+  db.prepare(
+    `
+    UPDATE claw_gateways
+    SET revoked_at = COALESCE(revoked_at, CURRENT_TIMESTAMP)
+    WHERE revoked_at IS NULL
+      AND expires_at <= ?
+    `
+  ).run(new Date().toISOString());
+}
+
+function revokeOldestActiveGateway(userId) {
+  const row = db
+    .prepare(
+      `
+      SELECT id
+      FROM claw_gateways
+      WHERE user_id = ?
+        AND revoked_at IS NULL
+        AND expires_at > ?
+      ORDER BY created_at ASC
+      LIMIT 1
+      `
+    )
+    .get(userId, new Date().toISOString());
+
+  if (!row) {
+    return;
+  }
+
+  db.prepare(
+    `
+    UPDATE claw_gateways
+    SET revoked_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+    `
+  ).run(row.id);
+}
+
+function issueClawGateway({ gatewayId, pageId, tokenHash, userId }) {
+  cleanupExpiredGateways();
+
+  const activeCount = db
+    .prepare(
+      `
+      SELECT COUNT(*) AS count
+      FROM claw_gateways
+      WHERE user_id = ?
+        AND revoked_at IS NULL
+        AND expires_at > ?
+      `
+    )
+    .get(userId, new Date().toISOString()).count;
+
+  if (activeCount >= MAX_ACTIVE_CLAW_GATEWAYS_PER_USER) {
+    revokeOldestActiveGateway(userId);
+  }
+
+  const expiresAt = new Date(Date.now() + CLAW_GATEWAY_TTL_MINUTES * 60 * 1000);
+
+  db.prepare(
+    `
+    INSERT INTO claw_gateways (
+      gateway_id,
+      user_id,
+      page_id,
+      token_hash,
+      expires_at
+    )
+    VALUES (?, ?, ?, ?, ?)
+    `
+  ).run(gatewayId, userId, pageId, tokenHash, expiresAt.toISOString());
+
+  return {
+    expiresAt,
+    gatewayId,
+    pageId
+  };
+}
+
+function listActiveGatewaysForUser(userId) {
+  cleanupExpiredGateways();
+
+  return db
+    .prepare(
+      `
+      SELECT
+        claw_gateways.gateway_id AS gatewayId,
+        claw_gateways.page_id AS pageId,
+        claw_gateways.created_at AS createdAt,
+        claw_gateways.expires_at AS expiresAt,
+        story_pages.title AS pageTitle
+      FROM claw_gateways
+      INNER JOIN story_pages
+        ON story_pages.id = claw_gateways.page_id
+      WHERE claw_gateways.user_id = ?
+        AND claw_gateways.revoked_at IS NULL
+        AND claw_gateways.expires_at > ?
+      ORDER BY claw_gateways.created_at DESC
+      `
+    )
+    .all(userId, new Date().toISOString());
+}
+
+function revokeGateway({ gatewayId, userId }) {
+  const result = db
+    .prepare(
+      `
+      UPDATE claw_gateways
+      SET revoked_at = CURRENT_TIMESTAMP
+      WHERE gateway_id = ?
+        AND user_id = ?
+        AND revoked_at IS NULL
+      `
+    )
+    .run(gatewayId, userId);
+
+  return result.changes > 0;
+}
+
+function findGatewayByTokenHash(tokenHash) {
+  return (
+    db
+      .prepare(
+        `
+        SELECT
+          claw_gateways.gateway_id AS gatewayId,
+          claw_gateways.user_id AS userId,
+          claw_gateways.page_id AS pageId,
+          claw_gateways.token_hash AS tokenHash,
+          claw_gateways.expires_at AS expiresAt,
+          claw_gateways.revoked_at AS revokedAt,
+          users.email AS userEmail
+        FROM claw_gateways
+        INNER JOIN users
+          ON users.id = claw_gateways.user_id
+        WHERE claw_gateways.token_hash = ?
+        LIMIT 1
+        `
+      )
+      .get(tokenHash) || null
+  );
 }
 
 function listClawsForUser(userId) {
@@ -833,6 +995,7 @@ module.exports = {
   createSession,
   createUser,
   deleteSession,
+  findGatewayByTokenHash,
   findClawForAuth,
   getPageState,
   getRootPageId,
@@ -840,8 +1003,11 @@ module.exports = {
   getUserById,
   getUserBySessionToken,
   hasVoted,
+  issueClawGateway,
   listClawsForUser,
+  listActiveGatewaysForUser,
   registerClawNonce,
+  revokeGateway,
   rotateClawToken,
   updateClawContext,
   castVote

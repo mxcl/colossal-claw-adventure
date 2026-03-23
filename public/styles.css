@@ -306,7 +306,8 @@ textarea {
 .option-grid,
 .proposal-list,
 .modal-grid,
-.claw-list {
+.claw-list,
+.button-row {
   display: grid;
   gap: 1rem;
 }
@@ -317,6 +318,11 @@ textarea {
 
 .modal-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.button-row {
+  align-items: start;
+  grid-template-columns: repeat(auto-fit, minmax(180px, max-content));
 }
 
 .auth-card-wide {

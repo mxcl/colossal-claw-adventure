@@ -6,6 +6,10 @@ function randomToken(bytes = 24) {
   return crypto.randomBytes(bytes).toString("hex");
 }
 
+function randomBase64UrlToken(bytes = 24, prefix = "") {
+  return `${prefix}${crypto.randomBytes(bytes).toString("base64url")}`;
+}
+
 function hashToken(token) {
   return crypto.createHash("sha256").update(token).digest("hex");
 }
@@ -133,6 +137,7 @@ module.exports = {
   hashPassword,
   hashToken,
   parseCookies,
+  randomBase64UrlToken,
   randomToken,
   setSessionCookie,
   verifyPassword

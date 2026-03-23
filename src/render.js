@@ -1,4 +1,10 @@
-const { BASE_URL, VOTE_THRESHOLD } = require("./env");
+const {
+  BASE_URL,
+  BYOCLAW_SPEC_VERSION,
+  CLAW_GATEWAY_TTL_MINUTES,
+  MAX_ACTIVE_CLAW_GATEWAYS_PER_USER,
+  VOTE_THRESHOLD
+} = require("./env");
 
 function escapeHtml(value) {
   return String(value)
@@ -123,46 +129,98 @@ function renderBreadcrumb(pageState) {
   `;
 }
 
-function renderClawInstructions(claw, pageState) {
-  const pageUrl = `${BASE_URL}${formatPath(pageState.page.id)}`;
-  const apiPageUrl = `${BASE_URL}/api/claw/pages/${pageState.page.id}`;
-  const proposalUrl =
-    `${BASE_URL}/api/claw/proposals?parentPageId=${pageState.page.id}`;
+function formatDateTime(value) {
+  return new Date(value).toLocaleString("en-US", {
+    dateStyle: "medium",
+    timeStyle: "short"
+  });
+}
 
+function buildGatewayPrompt(gateway, pageState, viewer) {
+  return [
+    "```md",
+    "# Colossal Claw Adventure - Temporary Gateway",
+    "",
+    "Colossal Claw Adventure is a branching story game where humans read",
+    "canonical pages and temporary Claw gateways can propose or vote on safe",
+    "story expansions.",
+    "",
+    "## Credentials",
+    `- Base URL: ${BASE_URL}/api/claw`,
+    `- Authorization: Bearer ${gateway.token}`,
+    `- Identity: ${viewer.email}`,
+    `- Starting Page: /page/${pageState.page.id} (${pageState.page.title})`,
+    "",
+    "## Endpoints",
+    "- GET /",
+    "- GET /current",
+    "- GET /pages/:pageId",
+    "- GET /proposals {parentPageId}",
+    "- POST /proposals {parentPageId, entryOptionLabel, pageTitle, pageBody, options}",
+    "- POST /proposals/:proposalId/vote",
+    "",
+    `adheres to byoclaw.dev v${BYOCLAW_SPEC_VERSION}`,
+    "```"
+  ].join("\n");
+}
+
+function renderGatewayPrompt(gateway, pageState, viewer) {
+  if (!gateway) {
+    return `
+      <div class="spec-card">
+        <span class="eyebrow">Prompt</span>
+        <p>
+          Issue a temporary gateway to generate a BYOClaw prompt for this exact
+          page context.
+        </p>
+      </div>
+      <form method="post" action="/byoclaw/issue" class="stack-form">
+        <input type="hidden" name="pageId" value="${pageState.page.id}">
+        <button class="primary-btn" type="submit">Issue Temporary Gateway</button>
+      </form>
+    `;
+  }
+
+  return `
+    <div class="token-panel">
+      <p class="eyebrow">Temporary Token</p>
+      <p class="tiny-copy">
+        Expires ${escapeHtml(formatDateTime(gateway.expiresAt))} and is valid
+        for at most ${CLAW_GATEWAY_TTL_MINUTES} minutes.
+      </p>
+    </div>
+    <pre class="code-block" data-gateway-prompt><code>${escapeHtml(
+      buildGatewayPrompt(gateway, pageState, viewer)
+    )}</code></pre>
+    <div class="button-row">
+      <button class="mini-btn" type="button" data-copy-gateway-prompt>
+        Copy Prompt
+      </button>
+      <form method="post" action="/byoclaw/issue">
+        <input type="hidden" name="pageId" value="${pageState.page.id}">
+        <button class="mini-btn mini-btn-accent" type="submit">
+          Issue Fresh Gateway
+        </button>
+      </form>
+    </div>
+  `;
+}
+
+function renderActiveGateway(gateway) {
   return `
     <article class="claw-card">
       <div class="claw-card-head">
-        <h3>${escapeHtml(claw.clawId)}</h3>
-        <span class="status-chip">
-          Starts from page ${claw.lastJoinPageId || pageState.page.id}
-        </span>
+        <h3>${escapeHtml(gateway.gatewayId)}</h3>
+        <span class="status-chip">Page ${gateway.pageId}</span>
       </div>
-      <form method="post" action="/claws/${encodeURIComponent(claw.clawId)}/context">
-        <input type="hidden" name="pageId" value="${pageState.page.id}">
-        <button class="mini-btn" type="submit">Use this page</button>
+      <p class="proposal-meta">
+        ${escapeHtml(gateway.pageTitle)} · expires
+        ${escapeHtml(formatDateTime(gateway.expiresAt))}
+      </p>
+      <form method="post" action="/byoclaw/revoke/${encodeURIComponent(gateway.gatewayId)}">
+        <input type="hidden" name="pageId" value="${gateway.pageId}">
+        <button class="mini-btn" type="submit">Revoke</button>
       </form>
-      <form method="post" action="/claws/${encodeURIComponent(claw.clawId)}/rotate">
-        <input type="hidden" name="pageId" value="${pageState.page.id}">
-        <button class="mini-btn mini-btn-accent" type="submit">Rotate token</button>
-      </form>
-      <pre class="code-block"><code>BASE_URL=${escapeHtml(BASE_URL)}
-CLAW_ID=${escapeHtml(claw.clawId)}
-CLAW_TOKEN=REPLACE_WITH_YOUR_TOKEN
-
-# Canonical page URL
-${escapeHtml(pageUrl)}
-
-# Start this claw from the current page context
-curl -s "${escapeHtml(apiPageUrl)}" \\
-  -H "Authorization: Bearer $CLAW_TOKEN" \\
-  -H "X-Claw-Id: $CLAW_ID" \\
-  -H "X-Claw-Nonce: $(uuidgen)"
-
-# Inspect branch-end proposals for this page
-curl -s "${escapeHtml(proposalUrl)}" \\
-  -H "Authorization: Bearer $CLAW_TOKEN" \\
-  -H "X-Claw-Id: $CLAW_ID" \\
-  -H "X-Claw-Nonce: $(uuidgen)"</code></pre>
     </article>
   `;
 }
@@ -171,7 +229,8 @@ function renderBringYourClawModal(input) {
   const {
     authError,
     clawError,
-    clawResult,
+    gateway,
+    gateways,
     modalOpen,
     notice,
     pageState,
@@ -238,51 +297,30 @@ function renderBringYourClawModal(input) {
         <div class="spec-card">
           <span class="eyebrow">Spec</span>
           <p>
-            The external claw contract is defined by the
+            This prompt follows the
             <a href="https://BYOClaw.dev" target="_blank" rel="noreferrer">
               BYOClaw spec
             </a>.
           </p>
+          <p class="tiny-copy">
+            Active token limit: ${MAX_ACTIVE_CLAW_GATEWAYS_PER_USER} per user.
+            Rate limits apply per token and per user.
+          </p>
         </div>
-        <form method="post" action="/claws" class="stack-form">
-          <input type="hidden" name="pageId" value="${pageState.page.id}">
-          <label>
-            New claw id
-            <input
-              name="clawId"
-              maxlength="64"
-              minlength="3"
-              pattern="[A-Za-z0-9_-]+"
-              placeholder="prize-rig-01"
-              required
-            >
-          </label>
-          <button class="primary-btn" type="submit">Create Claw</button>
-        </form>
-        ${
-          clawResult
-            ? `<div class="token-panel">
-                <p class="eyebrow">New token</p>
-                <h4>${escapeHtml(clawResult.clawId)}</h4>
-                <pre class="code-block"><code>${escapeHtml(clawResult.token)}</code></pre>
-                <p class="tiny-copy">
-                  Save this token now. It is only shown once.
-                </p>
-              </div>`
-            : ""
-        }
+        ${renderGatewayPrompt(gateway, pageState, viewer)}
       </section>
       <section class="auth-card auth-card-wide">
-        <p class="eyebrow">Your Claws</p>
-        <h3>Manage current page context</h3>
+        <p class="eyebrow">Active Gateways</p>
+        <h3>Temporary access for your claws</h3>
         <div class="claw-list">
           ${
-            input.claws.length
-              ? input.claws
-                  .map((claw) => renderClawInstructions(claw, pageState))
+            gateways.length
+              ? gateways
+                  .map((issuedGateway) => renderActiveGateway(issuedGateway))
                   .join("")
               : `<p class="empty-state">
-                  No claws yet. Create one to start from this page.
+                  No active gateways yet. Issue one to copy a prompt for this
+                  page.
                 </p>`
           }
         </div>
@@ -320,6 +358,9 @@ function renderPage(input) {
   const storyClass = pageState.options.length ? "story-shell" : "story-shell branch-shell";
   const currentPath = formatPath(pageState.page.id);
   const isBranchEnd = pageState.options.length === 0;
+  const byoclawHref = viewer
+    ? `${currentPath}?byoclaw=1&issue=1`
+    : `${currentPath}?byoclaw=1`;
 
   return `<!doctype html>
   <html lang="en">
@@ -347,9 +388,9 @@ function renderPage(input) {
             </p>
           </div>
           <div class="hero-actions">
-            <button class="primary-btn" type="button" data-open-bring-your-claw>
+            <a class="primary-btn" href="${byoclawHref}">
               Bring Your Claw
-            </button>
+            </a>
             ${
               viewer
                 ? `<form method="post" action="/auth/signout">
@@ -358,9 +399,9 @@ function renderPage(input) {
                       Sign Out ${escapeHtml(viewer.email)}
                     </button>
                   </form>`
-                : `<button class="secondary-btn" type="button" data-open-bring-your-claw>
+                : `<a class="secondary-btn" href="${byoclawHref}">
                     Sign In For BYOClaw
-                  </button>`
+                  </a>`
             }
           </div>
         </header>

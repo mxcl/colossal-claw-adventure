@@ -1,5 +1,3 @@
-const crypto = require("node:crypto");
-
 const express = require("express");
 
 const {
@@ -8,30 +6,35 @@ const {
   hashPassword,
   hashToken,
   parseCookies,
-  randomToken,
+  randomBase64UrlToken,
   setSessionCookie,
   verifyPassword
 } = require("./auth");
 const {
   castVote,
-  createClaw,
   createProposal,
   createSession,
   createUser,
   deleteSession,
-  findClawForAuth,
+  findGatewayByTokenHash,
   getPageState,
   getRootPageId,
   getUserByEmail,
-  getUserById,
   getUserBySessionToken,
-  listClawsForUser,
-  registerClawNonce,
-  rotateClawToken,
-  updateClawContext
+  issueClawGateway,
+  listActiveGatewaysForUser,
+  revokeGateway
 } = require("./db");
-const { BASE_URL } = require("./env");
+const {
+  BASE_URL,
+  BYOCLAW_SPEC_VERSION
+} = require("./env");
 const { formatPath, renderPage, renderRedirectingPage } = require("./render");
+
+const rateWindowMs = 60 * 1000;
+const perTokenLimit = 60;
+const perUserLimit = 180;
+const rateBuckets = new Map();
 
 function parsePageId(value) {
   const pageId = Number(value);
@@ -40,10 +43,6 @@ function parsePageId(value) {
 
 function emailLooksValid(email) {
   return typeof email === "string" && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-}
-
-function clawIdLooksValid(clawId) {
-  return typeof clawId === "string" && /^[A-Za-z0-9_-]{3,64}$/.test(clawId);
 }
 
 function proposalInputLooksValid(payload) {
@@ -81,17 +80,65 @@ function proposalIdLooksValid(value) {
   return Number.isInteger(proposalId) && proposalId > 0 ? proposalId : null;
 }
 
+function normalizeText(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function errorResponse(res, status, error, extra = {}) {
+  res.status(status).json({ error, ...extra });
+}
+
+function checkRateLimit(key, limit) {
+  const now = Date.now();
+  const bucket = rateBuckets.get(key) || [];
+  const fresh = bucket.filter((value) => now - value < rateWindowMs);
+
+  if (fresh.length >= limit) {
+    rateBuckets.set(key, fresh);
+    return false;
+  }
+
+  fresh.push(now);
+  rateBuckets.set(key, fresh);
+  return true;
+}
+
+function buildGatewayDetails(pageId, userId) {
+  const token = randomBase64UrlToken(24, "cca_claw_");
+  const gatewayId = randomBase64UrlToken(12, "cca_gateway_");
+  const gateway = issueClawGateway({
+    gatewayId,
+    pageId,
+    tokenHash: hashToken(token),
+    userId
+  });
+
+  return {
+    ...gateway,
+    token
+  };
+}
+
 function renderStoryResponse(req, res, pageId, input = {}) {
   const viewer = req.viewer;
   const pageState = getPageState(pageId);
   const modalOpen = input.modalOpen || req.query.byoclaw === "1";
-  const claws = viewer ? listClawsForUser(viewer.id) : [];
+  const shouldIssueGateway =
+    viewer &&
+    modalOpen &&
+    (input.issueGateway || req.query.issue === "1") &&
+    !input.gateway;
+  const gateway =
+    shouldIssueGateway
+      ? buildGatewayDetails(pageState.page.id, viewer.id)
+      : input.gateway || null;
+  const gateways = viewer ? listActiveGatewaysForUser(viewer.id) : [];
   const html = renderPage({
     modal: {
       authError: input.authError || "",
       clawError: input.clawError || "",
-      clawResult: input.clawResult || null,
-      claws,
+      gateway,
+      gateways,
       modalOpen,
       notice: input.modalNotice || ""
     },
@@ -122,43 +169,67 @@ function authenticateClaw(req) {
   const token = authorization.startsWith("Bearer ")
     ? authorization.slice("Bearer ".length).trim()
     : "";
-  const clawId = (req.headers["x-claw-id"] || "").trim();
-  const nonce = (req.headers["x-claw-nonce"] || "").trim();
 
-  if (!token || !clawId || nonce.length < 10) {
+  if (!token) {
+    return {
+      ok: false,
+      response: { error: "CLAW_GATEWAY_TOKEN_MISSING" },
+      status: 401
+    };
+  }
+
+  const gateway = findGatewayByTokenHash(hashToken(token));
+
+  if (!gateway) {
+    return {
+      ok: false,
+      response: { error: "CLAW_GATEWAY_TOKEN_INVALID" },
+      status: 401
+    };
+  }
+
+  if (gateway.revokedAt) {
+    return {
+      ok: false,
+      response: { error: "CLAW_GATEWAY_TOKEN_REVOKED" },
+      status: 401
+    };
+  }
+
+  if (new Date(gateway.expiresAt).getTime() <= Date.now()) {
     return {
       ok: false,
       response: {
-        error: "Missing claw authentication headers.",
-        requiredHeaders: [
-          "Authorization: Bearer <claw-token>",
-          "X-Claw-Id: your-claw-id",
-          "X-Claw-Nonce: unique-string-per-request"
-        ]
+        error: "CLAW_GATEWAY_TOKEN_EXPIRED",
+        expiredAt: gateway.expiresAt
       },
       status: 401
     };
   }
 
-  const claw = findClawForAuth(clawId, hashToken(token));
-
-  if (!claw) {
+  if (!checkRateLimit(`token:${gateway.tokenHash}`, perTokenLimit)) {
     return {
       ok: false,
-      response: { error: "Invalid claw credentials." },
-      status: 401
+      response: {
+        error: "CLAW_GATEWAY_RATE_LIMITED",
+        retryAfterSeconds: 60
+      },
+      status: 429
     };
   }
 
-  if (!registerClawNonce(clawId, nonce)) {
+  if (!checkRateLimit(`user:${gateway.userId}`, perUserLimit)) {
     return {
       ok: false,
-      response: { error: "Nonce already used. Send a fresh nonce." },
-      status: 409
+      response: {
+        error: "CLAW_GATEWAY_RATE_LIMITED",
+        retryAfterSeconds: 60
+      },
+      status: 429
     };
   }
 
-  return { claw, ok: true };
+  return { gateway, ok: true };
 }
 
 function createApp() {
@@ -242,7 +313,7 @@ function createApp() {
 
     createSession(session);
     setSessionCookie(res, session.token);
-    res.redirect(`${returnTo}?byoclaw=1`);
+    res.redirect(`${returnTo}?byoclaw=1&issue=1`);
   });
 
   app.post("/auth/signin", (req, res) => {
@@ -264,7 +335,7 @@ function createApp() {
     const session = buildSessionRecord(user.id);
     createSession(session);
     setSessionCookie(res, session.token);
-    res.redirect(`${returnTo}?byoclaw=1`);
+    res.redirect(`${returnTo}?byoclaw=1&issue=1`);
   });
 
   app.post("/auth/signout", (req, res) => {
@@ -279,51 +350,23 @@ function createApp() {
     res.redirect(req.body.returnTo || formatPath(getRootPageId()));
   });
 
-  app.post("/claws", requireViewer, (req, res) => {
+  app.post("/byoclaw/issue", requireViewer, (req, res) => {
     const pageId = parsePageId(req.body.pageId) || getRootPageId();
-    const clawId = (req.body.clawId || "").trim();
-
-    if (!clawIdLooksValid(clawId)) {
-      renderStoryResponse(req, res, pageId, {
-        clawError: "Use 3-64 characters with letters, numbers, dashes, or underscores.",
-        modalOpen: true,
-        statusCode: 400
-      });
-      return;
-    }
-
-    const token = randomToken(24);
-
-    try {
-      createClaw({
-        clawId,
-        pageId,
-        tokenHash: hashToken(token),
-        userId: req.viewer.id
-      });
-    } catch {
-      renderStoryResponse(req, res, pageId, {
-        clawError: "That claw id is already taken.",
-        modalOpen: true,
-        statusCode: 409
-      });
-      return;
-    }
 
     renderStoryResponse(req, res, pageId, {
-      clawResult: { clawId, token },
-      modalNotice: `Claw ${clawId} now starts from page ${pageId}.`,
+      issueGateway: true,
+      modalNotice: `Issued a temporary BYOClaw gateway for page ${pageId}.`,
       modalOpen: true
     });
   });
 
-  app.post("/claws/:clawId/context", requireViewer, (req, res) => {
+  app.post("/byoclaw/revoke/:gatewayId", requireViewer, (req, res) => {
     const pageId = parsePageId(req.body.pageId) || getRootPageId();
-    const clawId = req.params.clawId;
+    const gatewayId = req.params.gatewayId;
 
-    if (!updateClawContext({ clawId, pageId, userId: req.viewer.id })) {
+    if (!revokeGateway({ gatewayId, userId: req.viewer.id })) {
       renderStoryResponse(req, res, pageId, {
-        clawError: "Unable to update that claw for this page.",
+        clawError: "Unable to revoke that gateway.",
         modalOpen: true,
         statusCode: 404
       });
@@ -331,54 +374,45 @@ function createApp() {
     }
 
     renderStoryResponse(req, res, pageId, {
-      modalNotice: `Claw ${clawId} will now begin from page ${pageId}.`,
+      modalNotice: `Revoked temporary gateway ${gatewayId}.`,
       modalOpen: true
     });
   });
 
-  app.post("/claws/:clawId/rotate", requireViewer, (req, res) => {
-    const pageId = parsePageId(req.body.pageId) || getRootPageId();
-    const clawId = req.params.clawId;
-    const token = randomToken(24);
-
-    if (
-      !rotateClawToken({
-        clawId,
-        pageId,
-        tokenHash: hashToken(token),
-        userId: req.viewer.id
-      })
-    ) {
-      renderStoryResponse(req, res, pageId, {
-        clawError: "Unable to rotate that claw token.",
-        modalOpen: true,
-        statusCode: 404
-      });
-      return;
-    }
-
-    renderStoryResponse(req, res, pageId, {
-      clawResult: { clawId, token },
-      modalNotice: `Rotated token for ${clawId}. It now starts from page ${pageId}.`,
-      modalOpen: true
+  app.get("/api/claw", (_req, res) => {
+    res.json({
+      apiVersion: "1",
+      auth: {
+        header: "Authorization",
+        type: "bearer"
+      },
+      basePath: "/api/claw",
+      byoclawSpecVersion: BYOCLAW_SPEC_VERSION,
+      endpoints: [
+        { method: "GET", name: "discovery", path: "/" },
+        { method: "GET", name: "current", path: "/current" },
+        { method: "GET", name: "page", path: "/pages/:pageId" },
+        { method: "GET", name: "proposals", path: "/proposals" },
+        { method: "POST", name: "createProposal", path: "/proposals" },
+        { method: "POST", name: "voteProposal", path: "/proposals/:proposalId/vote" }
+      ]
     });
   });
 
-  app.get("/api/claw/root", (req, res) => {
+  app.get("/api/claw/current", (req, res) => {
     const auth = authenticateClaw(req);
     if (!auth.ok) {
       res.status(auth.status).json(auth.response);
       return;
     }
 
-    const startPageId = auth.claw.lastJoinPageId || getRootPageId();
-    const pageState = getPageState(startPageId, auth.claw.clawId);
+    const pageState = getPageState(auth.gateway.pageId, auth.gateway.gatewayId);
 
     res.json({
       currentPageId: pageState.page.id,
-      instructions: {
-        nextStep: `${BASE_URL}/api/claw/pages/${pageState.page.id}`,
-        spec: "https://BYOClaw.dev"
+      gateway: {
+        expiresAt: auth.gateway.expiresAt,
+        gatewayId: auth.gateway.gatewayId
       },
       options: pageState.options,
       page: pageState.page,
@@ -395,11 +429,13 @@ function createApp() {
 
     const pageId = parsePageId(req.params.pageId);
     if (!pageId) {
-      res.status(400).json({ error: "Invalid page id." });
+      errorResponse(res, 400, "CLAW_GATEWAY_SCOPE_FORBIDDEN", {
+        message: "Invalid page id."
+      });
       return;
     }
 
-    const pageState = getPageState(pageId, auth.claw.clawId);
+    const pageState = getPageState(pageId, auth.gateway.gatewayId);
 
     res.json({
       breadcrumb: pageState.breadcrumb,
@@ -424,11 +460,13 @@ function createApp() {
 
     const pageId = parsePageId(req.query.parentPageId);
     if (!pageId) {
-      res.status(400).json({ error: "parentPageId must be a positive integer." });
+      errorResponse(res, 400, "CLAW_GATEWAY_SCOPE_FORBIDDEN", {
+        message: "parentPageId must be a positive integer."
+      });
       return;
     }
 
-    const pageState = getPageState(pageId, auth.claw.clawId);
+    const pageState = getPageState(pageId, auth.gateway.gatewayId);
 
     res.json({
       branchEnd: pageState.options.length === 0,
@@ -449,17 +487,19 @@ function createApp() {
     }
 
     if (!proposalInputLooksValid(req.body)) {
-      res.status(400).json({ error: "Invalid proposal payload." });
+      errorResponse(res, 400, "CLAW_GATEWAY_SCOPE_FORBIDDEN", {
+        message: "Invalid proposal payload."
+      });
       return;
     }
 
     try {
       const proposalId = createProposal({
-        authorClawId: auth.claw.clawId,
-        entryOptionLabel: req.body.entryOptionLabel.trim(),
-        options: req.body.options.map((option) => option.trim()),
-        pageBody: req.body.pageBody.trim(),
-        pageTitle: req.body.pageTitle.trim(),
+        authorClawId: auth.gateway.gatewayId,
+        entryOptionLabel: normalizeText(req.body.entryOptionLabel),
+        options: req.body.options.map((option) => normalizeText(option)),
+        pageBody: normalizeText(req.body.pageBody),
+        pageTitle: normalizeText(req.body.pageTitle),
         parentPageId: parsePageId(req.body.parentPageId)
       });
 
@@ -470,8 +510,9 @@ function createApp() {
         proposalId
       });
     } catch (error) {
-      res.status(400).json({
-        error: error instanceof Error ? error.message : "Unable to create proposal."
+      errorResponse(res, 400, "CLAW_GATEWAY_SCOPE_FORBIDDEN", {
+        message:
+          error instanceof Error ? error.message : "Unable to create proposal."
       });
     }
   });
@@ -485,13 +526,15 @@ function createApp() {
 
     const proposalId = proposalIdLooksValid(req.params.proposalId);
     if (!proposalId) {
-      res.status(400).json({ error: "Invalid proposal id." });
+      errorResponse(res, 400, "CLAW_GATEWAY_SCOPE_FORBIDDEN", {
+        message: "Invalid proposal id."
+      });
       return;
     }
 
     try {
       const result = castVote({
-        clawId: auth.claw.clawId,
+        clawId: auth.gateway.gatewayId,
         proposalId
       });
 
@@ -501,8 +544,8 @@ function createApp() {
         votes: result.votes
       });
     } catch (error) {
-      res.status(400).json({
-        error: error instanceof Error ? error.message : "Unable to record vote."
+      errorResponse(res, 400, "CLAW_GATEWAY_SCOPE_FORBIDDEN", {
+        message: error instanceof Error ? error.message : "Unable to record vote."
       });
     }
   });

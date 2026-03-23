@@ -47,9 +47,15 @@ const SQLITE_DB_PATH =
   path.join(process.cwd(), "data", "colossal-claw-adventure.sqlite");
 const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
 const VOTE_THRESHOLD = 3;
+const BYOCLAW_SPEC_VERSION = "0.1.0";
+const CLAW_GATEWAY_TTL_MINUTES = 10;
+const MAX_ACTIVE_CLAW_GATEWAYS_PER_USER = 5;
 
 module.exports = {
   BASE_URL,
+  BYOCLAW_SPEC_VERSION,
+  CLAW_GATEWAY_TTL_MINUTES,
+  MAX_ACTIVE_CLAW_GATEWAYS_PER_USER,
   PORT,
   SESSION_COOKIE_NAME,
   SQLITE_DB_PATH,
