@@ -12,6 +12,7 @@ REMOTE_SERVICE="${REMOTE_SERVICE:-${APP_NAME}}"
 APP_PORT="${APP_PORT:-3000}"
 PUBLIC_HOSTNAME="${PUBLIC_HOSTNAME:-}"
 BASE_URL="${BASE_URL:-}"
+APP_NODE_ENV="${APP_NODE_ENV:-}"
 if [[ -z "${BASE_URL}" && -n "${PUBLIC_HOSTNAME}" ]]; then
   BASE_URL="http://${PUBLIC_HOSTNAME}"
 fi
@@ -30,6 +31,7 @@ Environment overrides:
   APP_PORT            App listen port behind nginx
   PUBLIC_HOSTNAME     Domain to serve with nginx on port 80
   BASE_URL            Canonical base URL exposed to the app
+  APP_NODE_ENV        Optional NODE_ENV value written to the app env file
 EOF
 }
 
@@ -48,8 +50,19 @@ fi
 require_cmd ssh
 require_cmd rsync
 
-ssh -p "${DEPLOY_PORT}" "${REMOTE}" \
-  "mkdir -p '${REMOTE_APP_DIR}' '${REMOTE_DATA_DIR}'"
+ssh -p "${DEPLOY_PORT}" "${REMOTE}" "
+APP_USER=\$(id -un)
+APP_GROUP=\$(id -gn)
+if command -v sudo >/dev/null 2>&1; then
+  sudo mkdir -p '${REMOTE_APP_DIR}' '${REMOTE_DATA_DIR}'
+  sudo chown -R \"\${APP_USER}:\${APP_GROUP}\" \
+    '${REMOTE_APP_DIR}' '${REMOTE_DATA_DIR}'
+else
+  mkdir -p '${REMOTE_APP_DIR}' '${REMOTE_DATA_DIR}'
+  chown -R \"\${APP_USER}:\${APP_GROUP}\" \
+    '${REMOTE_APP_DIR}' '${REMOTE_DATA_DIR}'
+fi
+"
 
 rsync -az --delete \
   --exclude ".git/" \
@@ -70,6 +83,7 @@ APP_DB_PATH='${REMOTE_DATA_DIR}/${APP_NAME}.sqlite'
 APP_PORT='${APP_PORT}'
 PUBLIC_HOSTNAME='${PUBLIC_HOSTNAME}'
 BASE_URL='${BASE_URL}'
+APP_NODE_ENV='${APP_NODE_ENV}'
 APP_USER="\$(id -un)"
 APP_GROUP="\$(id -gn)"
 SUDO=""
@@ -96,6 +110,34 @@ ensure_cmd() {
 
   echo "Unable to install required package for \$1" >&2
   exit 1
+}
+
+ensure_node_runtime() {
+  local node_major=0
+
+  if command -v node >/dev/null 2>&1; then
+    node_major="\$(node --version | sed 's/^v//; s/\..*//')"
+  fi
+
+  if [[ "\${node_major}" -ge 22 ]]; then
+    return
+  fi
+
+  if command -v dnf >/dev/null 2>&1; then
+    \$SUDO dnf install -y nodejs22 nodejs22-npm --allowerasing
+
+    if command -v alternatives >/dev/null 2>&1; then
+      [[ -x /usr/bin/node-22 ]] && \
+        \$SUDO alternatives --set node /usr/bin/node-22 || true
+      [[ -x /usr/bin/npm-22 ]] && \
+        \$SUDO alternatives --set npm /usr/bin/npm-22 || true
+    fi
+
+    return
+  fi
+
+  ensure_cmd node nodejs nodejs
+  ensure_cmd npm nodejs npm
 }
 
 ensure_swap() {
@@ -131,18 +173,29 @@ upsert_env() {
 }
 
 write_nginx_config() {
+  local nginx_conf="/etc/nginx/conf.d/\${SERVICE_NAME}.conf"
+
   if [[ -z "\$PUBLIC_HOSTNAME" ]]; then
     return
   fi
 
-  cat <<NGINX | \$SUDO tee "/etc/nginx/conf.d/\${SERVICE_NAME}.conf" >/dev/null
+  if [[ -f "\$nginx_conf" ]] && \
+    \$SUDO grep -q 'managed by Certbot' "\$nginx_conf"; then
+    return
+  fi
+
+  cat <<'NGINX' | \
+    sed \
+      -e "s/__PUBLIC_HOSTNAME__/\${PUBLIC_HOSTNAME}/g" \
+      -e "s/__APP_PORT__/\${APP_PORT}/g" | \
+    \$SUDO tee "\$nginx_conf" >/dev/null
 server {
   listen 80;
   listen [::]:80;
-  server_name \$PUBLIC_HOSTNAME www.\$PUBLIC_HOSTNAME;
+  server_name __PUBLIC_HOSTNAME__ www.__PUBLIC_HOSTNAME__;
 
   location / {
-    proxy_pass http://127.0.0.1:\$APP_PORT;
+    proxy_pass http://127.0.0.1:__APP_PORT__;
     proxy_http_version 1.1;
     proxy_set_header Host \$host;
     proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
@@ -159,8 +212,7 @@ NGINX
 }
 
 ensure_cmd rsync rsync rsync
-ensure_cmd node nodejs nodejs
-ensure_cmd npm nodejs npm
+ensure_node_runtime
 ensure_cmd nginx nginx nginx
 ensure_cmd make make make
 ensure_cmd python3 python3 python3
@@ -179,6 +231,10 @@ upsert_env PORT "\$APP_PORT"
 
 if [[ -n "\$BASE_URL" ]]; then
   upsert_env BASE_URL "\$BASE_URL"
+fi
+
+if [[ -n "\$APP_NODE_ENV" ]]; then
+  upsert_env NODE_ENV "\$APP_NODE_ENV"
 fi
 
 cat <<SERVICE | \$SUDO tee "/etc/systemd/system/\${SERVICE_NAME}.service" >/dev/null
