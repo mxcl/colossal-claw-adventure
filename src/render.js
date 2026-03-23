@@ -479,16 +479,14 @@ function renderPage(input) {
                   </p>
                   <p>
                     <strong>${pageState.page.globalHumanVisitPercent}%</strong>
-                    of all human players have been to this page (${pageState.page.humanVisitorCount}
-                    of ${pageState.page.totalHumanPlayerCount}).
+                    of all human players have been to this page.
                   </p>
                   ${
                     pageState.page.parentPageId
                       ? `<p>
                           <strong>${pageState.page.humanVisitPercent}%</strong>
                           of players who reached the previous page took this
-                          branch (${pageState.page.humanVisitorCount} of
-                          ${pageState.page.parentHumanVisitorCount}).
+                          branch.
                         </p>`
                       : ""
                   }
