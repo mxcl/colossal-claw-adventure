@@ -3,6 +3,7 @@ const path = require("node:path");
 
 const Database = require("better-sqlite3");
 
+const { randomBase64UrlToken } = require("./auth");
 const {
   CLAW_GATEWAY_TTL_MINUTES,
   MAX_ACTIVE_CLAW_GATEWAYS_PER_USER,
@@ -11,6 +12,7 @@ const {
 } = require("./env");
 
 const globalDb = globalThis;
+const PAGE_PUBLIC_ID_BYTES = 9;
 const ROOT_PAGE_TITLE = "The Lever in the Dark";
 const LEGACY_ROOT_PAGE_TITLE = "Colossal Claw Adventure";
 const ROOT_PAGE_BODY = `You wake to the low hum of machines that shouldn’t be running.
@@ -149,7 +151,9 @@ function createDatabase() {
   migrateGatewayForeignKeys(db);
   migrateProposalModels(db);
   migrateLegacyStoryTitles(db);
+  migrateStoryPagePublicIds(db);
   seedIfEmpty(db);
+  migrateStoryPagePublicIds(db);
   return db;
 }
 
@@ -319,6 +323,93 @@ function migrateProposalModels(database) {
   database.exec("PRAGMA foreign_keys = ON");
 }
 
+function createPagePublicId() {
+  return randomBase64UrlToken(PAGE_PUBLIC_ID_BYTES);
+}
+
+function pagePublicIdExists(database, publicId) {
+  const row = database
+    .prepare(
+      `
+      SELECT id
+      FROM story_pages
+      WHERE public_id = ?
+      LIMIT 1
+      `
+    )
+    .get(publicId);
+
+  return Boolean(row);
+}
+
+function generateUniquePagePublicId(database) {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const publicId = createPagePublicId();
+
+    if (!pagePublicIdExists(database, publicId)) {
+      return publicId;
+    }
+  }
+
+  throw new Error("Unable to allocate a unique public page id.");
+}
+
+function migrateStoryPagePublicIds(database) {
+  if (!tableColumns(database, "story_pages").includes("public_id")) {
+    database.exec("ALTER TABLE story_pages ADD COLUMN public_id TEXT");
+  }
+
+  const migrate = database.transaction(() => {
+    const rows = database
+      .prepare(
+        `
+        SELECT id
+        FROM story_pages
+        WHERE public_id IS NULL
+          OR public_id = ''
+        `
+      )
+      .all();
+    const update = database.prepare(
+      `
+      UPDATE story_pages
+      SET public_id = ?
+      WHERE id = ?
+      `
+    );
+
+    for (const row of rows) {
+      update.run(generateUniquePagePublicId(database), row.id);
+    }
+
+    database.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS story_pages_public_id_idx
+      ON story_pages(public_id)
+    `);
+  });
+
+  migrate();
+}
+
+function insertStoryPage(database, input) {
+  const result = database
+    .prepare(
+      `
+      INSERT INTO story_pages (public_id, parent_page_id, title, body, is_stub)
+      VALUES (?, ?, ?, ?, ?)
+      `
+    )
+    .run(
+      generateUniquePagePublicId(database),
+      input.parentPageId,
+      input.title,
+      input.body,
+      input.isStub
+    );
+
+  return Number(result.lastInsertRowid);
+}
+
 function seedIfEmpty(database) {
   const count = database.prepare("SELECT COUNT(*) AS count FROM story_pages").get().count;
 
@@ -326,13 +417,8 @@ function seedIfEmpty(database) {
     return;
   }
 
-  const insertPage = database.prepare(`
-    INSERT INTO story_pages (parent_page_id, title, body, is_stub)
-    VALUES (@parentPageId, @title, @body, @isStub)
-  `);
-
   const seed = database.transaction(() => {
-    insertPage.run({
+    insertStoryPage(database, {
       parentPageId: null,
       title: ROOT_PAGE_TITLE,
       body: ROOT_PAGE_BODY,
@@ -372,6 +458,22 @@ function getRootPageId() {
   return row ? row.id : null;
 }
 
+function getRootPagePublicId() {
+  const row = db
+    .prepare(
+      `
+      SELECT public_id AS publicId
+      FROM story_pages
+      WHERE parent_page_id IS NULL
+      ORDER BY id ASC
+      LIMIT 1
+      `
+    )
+    .get();
+
+  return row ? row.publicId : null;
+}
+
 function getStoryPageCount() {
   const row = db
     .prepare(
@@ -385,19 +487,50 @@ function getStoryPageCount() {
   return row ? row.count : 0;
 }
 
+function findPageIdByPublicId(publicId) {
+  const row = db
+    .prepare(
+      `
+      SELECT id
+      FROM story_pages
+      WHERE public_id = ?
+      LIMIT 1
+      `
+    )
+    .get(publicId);
+
+  return row ? row.id : null;
+}
+
+function resolvePageId(pageId) {
+  if (Number.isInteger(pageId) && pageId > 0) {
+    return pageId;
+  }
+
+  if (typeof pageId === "string" && pageId) {
+    return findPageIdByPublicId(pageId);
+  }
+
+  return null;
+}
+
 function getPage(pageId) {
   const page = db
     .prepare(
       `
       SELECT
-        id,
-        parent_page_id AS parentPageId,
-        title,
-        body,
-        is_stub AS isStub,
-        created_at AS createdAt
+        story_pages.id AS dbId,
+        story_pages.public_id AS publicId,
+        story_pages.parent_page_id AS parentPageDbId,
+        parent_pages.public_id AS parentPagePublicId,
+        story_pages.title,
+        story_pages.body,
+        story_pages.is_stub AS isStub,
+        story_pages.created_at AS createdAt
       FROM story_pages
-      WHERE id = ?
+      LEFT JOIN story_pages AS parent_pages
+        ON parent_pages.id = story_pages.parent_page_id
+      WHERE story_pages.id = ?
       `
     )
     .get(pageId);
@@ -412,8 +545,9 @@ function getPage(pageId) {
       SELECT
         page_options.id,
         page_options.label,
-        page_options.target_page_id AS targetPageId,
+        page_options.target_page_id AS targetPageDbId,
         page_options.sort_order AS sortOrder,
+        story_pages.public_id AS targetPagePublicId,
         story_pages.title AS targetTitle,
         story_pages.is_stub AS targetIsStub
       FROM page_options
@@ -437,9 +571,10 @@ function getBreadcrumb(pageId) {
       .prepare(
         `
         SELECT
-          id,
+          id AS dbId,
+          public_id AS publicId,
           title,
-          parent_page_id AS parentPageId
+          parent_page_id AS parentPageDbId
         FROM story_pages
         WHERE id = ?
         `
@@ -450,8 +585,8 @@ function getBreadcrumb(pageId) {
       break;
     }
 
-    trail.unshift({ id: row.id, title: row.title });
-    currentId = row.parentPageId;
+    trail.unshift({ id: row.publicId, title: row.title });
+    currentId = row.parentPageDbId;
   }
 
   return trail;
@@ -550,23 +685,24 @@ function getHumanVisitCounts(pageIds) {
 
 function getPageState(pageId, voterClawId = null) {
   const rootPageId = getRootPageId();
-  const safePageId = Number.isInteger(pageId) ? pageId : rootPageId;
+  const safePageId = resolvePageId(pageId) || rootPageId;
   const loaded = getPage(safePageId) || getPage(rootPageId);
 
   if (!loaded) {
     throw new Error("Unable to load the story.");
   }
 
+  const rootPagePublicId = getRootPagePublicId();
   const humanVisitCounts = getHumanVisitCounts([
-    loaded.page.id,
-    loaded.page.parentPageId,
-    ...loaded.options.map((option) => option.targetPageId)
+    loaded.page.dbId,
+    loaded.page.parentPageDbId,
+    ...loaded.options.map((option) => option.targetPageDbId)
   ]);
-  const currentPageHumanVisitorCount = humanVisitCounts.get(loaded.page.id) || 0;
-  const parentPageHumanVisitorCount = loaded.page.parentPageId
-    ? humanVisitCounts.get(loaded.page.parentPageId) || 0
+  const currentPageHumanVisitorCount = humanVisitCounts.get(loaded.page.dbId) || 0;
+  const parentPageHumanVisitorCount = loaded.page.parentPageDbId
+    ? humanVisitCounts.get(loaded.page.parentPageDbId) || 0
     : 0;
-  const currentPageHumanVisitPercent = loaded.page.parentPageId
+  const currentPageHumanVisitPercent = loaded.page.parentPageDbId
     ? (
         parentPageHumanVisitorCount > 0
           ? Math.round(
@@ -577,14 +713,14 @@ function getPageState(pageId, voterClawId = null) {
     : 100;
 
   return {
-    breadcrumb: getBreadcrumb(loaded.page.id),
-    currentPageId: loaded.page.id,
+    breadcrumb: getBreadcrumb(loaded.page.dbId),
+    currentPageId: loaded.page.publicId,
     options: loaded.options.map((option) => ({
-      humanVisitCount: humanVisitCounts.get(option.targetPageId) || 0,
+      humanVisitCount: humanVisitCounts.get(option.targetPageDbId) || 0,
       humanVisitPercent:
         currentPageHumanVisitorCount > 0
           ? Math.round(
-              ((humanVisitCounts.get(option.targetPageId) || 0) /
+              ((humanVisitCounts.get(option.targetPageDbId) || 0) /
                 currentPageHumanVisitorCount) *
                 100
             )
@@ -592,20 +728,23 @@ function getPageState(pageId, voterClawId = null) {
       id: option.id,
       label: option.label,
       targetIsStub: option.targetIsStub === 1,
-      targetPageId: option.targetPageId,
+      targetPageDbId: option.targetPageDbId,
+      targetPageId: option.targetPagePublicId,
       targetTitle: option.targetTitle
     })),
     page: {
       body: loaded.page.body,
+      dbId: loaded.page.dbId,
       humanVisitPercent: currentPageHumanVisitPercent,
       humanVisitorCount: currentPageHumanVisitorCount,
-      id: loaded.page.id,
+      id: loaded.page.publicId,
       isStub: loaded.page.isStub === 1,
-      parentPageId: loaded.page.parentPageId,
+      parentPageDbId: loaded.page.parentPageDbId,
+      parentPageId: loaded.page.parentPagePublicId,
       title: loaded.page.title
     },
-    proposals: getProposals(loaded.page.id, voterClawId),
-    rootPageId
+    proposals: getProposals(loaded.page.dbId, voterClawId),
+    rootPageId: rootPagePublicId
   };
 }
 
@@ -734,6 +873,12 @@ function revokeOldestActiveGateway(userId) {
 }
 
 function issueClawGateway({ gatewayId, pageId, tokenHash, userId }) {
+  const resolvedPageId = resolvePageId(pageId);
+
+  if (!resolvedPageId) {
+    throw new Error("Page does not exist.");
+  }
+
   cleanupExpiredGateways();
 
   const activeCount = db
@@ -765,7 +910,7 @@ function issueClawGateway({ gatewayId, pageId, tokenHash, userId }) {
     )
     VALUES (?, ?, ?, ?, ?)
     `
-  ).run(gatewayId, userId, pageId, tokenHash, expiresAt.toISOString());
+  ).run(gatewayId, userId, resolvedPageId, tokenHash, expiresAt.toISOString());
 
   return {
     expiresAt,
@@ -782,7 +927,7 @@ function listActiveGatewaysForUser(userId) {
       `
       SELECT
         claw_gateways.gateway_id AS gatewayId,
-        claw_gateways.page_id AS pageId,
+        story_pages.public_id AS pageId,
         claw_gateways.created_at AS createdAt,
         claw_gateways.expires_at AS expiresAt,
         story_pages.title AS pageTitle
@@ -822,7 +967,7 @@ function findGatewayByTokenHash(tokenHash) {
         SELECT
           claw_gateways.gateway_id AS gatewayId,
           claw_gateways.user_id AS userId,
-          claw_gateways.page_id AS pageId,
+          story_pages.public_id AS pageId,
           claw_gateways.token_hash AS tokenHash,
           claw_gateways.expires_at AS expiresAt,
           claw_gateways.revoked_at AS revokedAt,
@@ -830,6 +975,8 @@ function findGatewayByTokenHash(tokenHash) {
         FROM claw_gateways
         INNER JOIN users
           ON users.id = claw_gateways.user_id
+        INNER JOIN story_pages
+          ON story_pages.id = claw_gateways.page_id
         WHERE claw_gateways.token_hash = ?
         LIMIT 1
         `
@@ -856,15 +1003,18 @@ function listClawsForUser(userId) {
 }
 
 function createClaw({ clawId, pageId, tokenHash, userId }) {
+  const resolvedPageId = resolvePageId(pageId);
+
   db.prepare(
     `
     INSERT INTO claws (user_id, claw_id, token_hash, last_join_page_id)
     VALUES (?, ?, ?, ?)
     `
-  ).run(userId, clawId, tokenHash, pageId);
+  ).run(userId, clawId, tokenHash, resolvedPageId);
 }
 
 function updateClawContext({ clawId, pageId, userId }) {
+  const resolvedPageId = resolvePageId(pageId);
   const result = db
     .prepare(
       `
@@ -876,12 +1026,13 @@ function updateClawContext({ clawId, pageId, userId }) {
         AND claw_id = ?
       `
     )
-    .run(pageId, userId, clawId);
+    .run(resolvedPageId, userId, clawId);
 
   return result.changes > 0;
 }
 
 function rotateClawToken({ clawId, pageId, tokenHash, userId }) {
+  const resolvedPageId = resolvePageId(pageId);
   const result = db
     .prepare(
       `
@@ -894,7 +1045,7 @@ function rotateClawToken({ clawId, pageId, tokenHash, userId }) {
         AND claw_id = ?
       `
     )
-    .run(tokenHash, pageId, userId, clawId);
+    .run(tokenHash, resolvedPageId, userId, clawId);
 
   return result.changes > 0;
 }
@@ -956,9 +1107,10 @@ function hasVoted(proposalId, clawId) {
 
 function createProposal(input) {
   const transaction = db.transaction(() => {
+    const parentPageId = resolvePageId(input.parentPageId);
     const pageExists = db
       .prepare("SELECT id FROM story_pages WHERE id = ?")
-      .get(input.parentPageId);
+      .get(parentPageId);
 
     if (!pageExists) {
       throw new Error("Parent page does not exist.");
@@ -966,7 +1118,7 @@ function createProposal(input) {
 
     const existingOptions = db
       .prepare("SELECT COUNT(*) AS count FROM page_options WHERE page_id = ?")
-      .get(input.parentPageId).count;
+      .get(parentPageId).count;
 
     if (existingOptions > 0) {
       throw new Error("Proposals can only be created from a branch end.");
@@ -987,7 +1139,7 @@ function createProposal(input) {
         `
       )
       .run(
-        input.parentPageId,
+        parentPageId,
         input.entryOptionLabel,
         input.pageTitle,
         input.pageBody,
@@ -1060,16 +1212,12 @@ function approveProposal(proposalId) {
     .all(proposalId);
 
   const transaction = db.transaction(() => {
-    const pageResult = db
-      .prepare(
-        `
-        INSERT INTO story_pages (parent_page_id, title, body, is_stub)
-        VALUES (?, ?, ?, 0)
-        `
-      )
-      .run(proposal.parentPageId, proposal.pageTitle, proposal.pageBody);
-
-    const newPageId = Number(pageResult.lastInsertRowid);
+    const newPageId = insertStoryPage(db, {
+      parentPageId: proposal.parentPageId,
+      title: proposal.pageTitle,
+      body: proposal.pageBody,
+      isStub: 0
+    });
 
     db.prepare(
       `
@@ -1083,13 +1231,6 @@ function approveProposal(proposalId) {
       nextOptionSortOrder(proposal.parentPageId)
     );
 
-    const insertStub = db.prepare(
-      `
-      INSERT INTO story_pages (parent_page_id, title, body, is_stub)
-      VALUES (?, ?, ?, 1)
-      `
-    );
-
     const insertOption = db.prepare(
       `
       INSERT INTO page_options (page_id, label, target_page_id, sort_order)
@@ -1098,16 +1239,17 @@ function approveProposal(proposalId) {
     );
 
     options.forEach((option, index) => {
-      const stub = insertStub.run(
-        newPageId,
-        "Uncharted Path",
-        `Branch seeded by option: "${option.label}". A claw must canonize the next scene.`
-      );
+      const stubPageId = insertStoryPage(db, {
+        parentPageId: newPageId,
+        title: "Uncharted Path",
+        body: `Branch seeded by option: "${option.label}". A claw must canonize the next scene.`,
+        isStub: 1
+      });
 
       insertOption.run(
         newPageId,
         option.label,
-        Number(stub.lastInsertRowid),
+        stubPageId,
         index + 1
       );
     });
@@ -1210,9 +1352,11 @@ module.exports = {
   createUser,
   deleteSession,
   findClawForAuth,
+  findPageIdByPublicId,
   findGatewayByTokenHash,
   getPageState,
   getRootPageId,
+  getRootPagePublicId,
   getStoryPageCount,
   getUserByEmail,
   getUserById,

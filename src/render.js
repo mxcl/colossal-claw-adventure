@@ -17,7 +17,7 @@ function escapeHtml(value) {
 }
 
 function formatPath(pageId) {
-  return `/page/${pageId}`;
+  return `/page/${encodeURIComponent(pageId)}`;
 }
 
 function renderNotice(notice) {
@@ -65,7 +65,6 @@ function renderStoryOptions(options) {
           .map(
             (option) => `
               <a class="option-card" href="${formatPath(option.targetPageId)}">
-                <span class="option-tag">Option</span>
                 <strong>${escapeHtml(option.label)}</strong>
                 <span class="option-meta">
                   ${
@@ -170,6 +169,7 @@ function buildGatewayPrompt(gateway, pageState, viewer) {
     "- POST /proposals/:proposalId/vote",
     "",
     "## Proposal Requirements",
+    "- Treat pageId values as opaque identifiers. Do not infer or increment them.",
     "- Every proposed page must include a concise pageTitle.",
     "- Write pageBody in Markdown.",
     "- Include model with the exact model name powering the claw.",
@@ -226,12 +226,15 @@ function renderActiveGateway(gateway) {
   return `
     <article class="claw-card">
       <div class="claw-card-head">
-        <h3>${escapeHtml(gateway.gatewayId)}</h3>
-        <span class="status-chip">Page ${gateway.pageId}</span>
+        <h3>${escapeHtml(gateway.pageTitle)}</h3>
+        <span class="status-chip">Scoped route</span>
       </div>
       <p class="proposal-meta">
-        ${escapeHtml(gateway.pageTitle)} · expires
+        Gateway ${escapeHtml(gateway.gatewayId)} · expires
         ${escapeHtml(formatDateTime(gateway.expiresAt))}
+      </p>
+      <p class="tiny-copy">
+        <a href="${formatPath(gateway.pageId)}">Open scoped page</a>
       </p>
       <form method="post" action="/byoclaw/revoke/${encodeURIComponent(gateway.gatewayId)}">
         <input type="hidden" name="pageId" value="${gateway.pageId}">
@@ -307,8 +310,7 @@ function renderBringYourClawModal(input) {
         <h3>Start from this page</h3>
         <p class="lede">
           You are preparing claws to participate from
-          <strong>${escapeHtml(pageState.page.title)}</strong> at page
-          <strong>#${pageState.page.id}</strong>.
+          <strong>${escapeHtml(pageState.page.title)}</strong>.
         </p>
         <div class="spec-card">
           <span class="eyebrow">Spec</span>
@@ -354,7 +356,7 @@ function renderBringYourClawModal(input) {
         <div class="modal-top">
           <div>
             <span class="eyebrow">Bring Your Claw</span>
-            <h2>Join from page ${pageState.page.id}</h2>
+            <h2>Join from this page</h2>
           </div>
           <a
             class="close-btn"
@@ -435,7 +437,7 @@ function renderPage(input) {
               ${renderMarkdown(pageState.page.body)}
             </div>
             <div class="page-meta">
-              <span class="status-chip">Page #${pageState.page.id}</span>
+              <span class="status-chip">Canonical page</span>
               ${
                 pageState.page.parentPageId
                   ? `<span class="status-chip">
@@ -511,7 +513,7 @@ function renderLandingPage(rootPath, pageCount) {
             </p>
             <div class="landing-actions">
               <a class="primary-btn landing-cta" href="${escapeHtml(rootPath)}">
-                Go to page 1
+                Open root page
               </a>
             </div>
           </div>

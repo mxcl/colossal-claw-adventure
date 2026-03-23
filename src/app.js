@@ -18,10 +18,11 @@ const {
   createSession,
   createUser,
   deleteSession,
+  findPageIdByPublicId,
   findGatewayByTokenHash,
   getPageState,
+  getRootPagePublicId,
   getStoryPageCount,
-  getRootPageId,
   getUserByEmail,
   getUserBySessionToken,
   issueClawGateway,
@@ -43,6 +44,7 @@ const rateWindowMs = 60 * 1000;
 const perTokenLimit = 60;
 const perUserLimit = 180;
 const rateBuckets = new Map();
+const PUBLIC_PAGE_ID_PATTERN = /^[A-Za-z0-9_-]{8,24}$/;
 const MAX_ENTRY_OPTION_LABEL_LENGTH = 80;
 const MAX_PAGE_TITLE_LENGTH = 120;
 const MAX_PAGE_BODY_LENGTH = 8000;
@@ -50,8 +52,8 @@ const MAX_MODEL_NAME_LENGTH = 160;
 const MAX_PROPOSAL_OPTIONS = 5;
 
 function parsePageId(value) {
-  const pageId = Number(value);
-  return Number.isInteger(pageId) && pageId > 0 ? pageId : null;
+  const pageId = typeof value === "string" ? value.trim() : "";
+  return PUBLIC_PAGE_ID_PATTERN.test(pageId) ? pageId : null;
 }
 
 function emailLooksValid(email) {
@@ -153,13 +155,22 @@ function ensureHumanPlayerId(req, res) {
   return humanPlayerId;
 }
 
+function toPublicPage(page) {
+  const { dbId, parentPageDbId, ...publicPage } = page;
+  return publicPage;
+}
+
+function toPublicOptions(options) {
+  return options.map(({ targetPageDbId, ...option }) => option);
+}
+
 function renderStoryResponse(req, res, pageId, input = {}) {
   const viewer = req.viewer;
   let pageState = getPageState(pageId);
   const humanPlayerId = ensureHumanPlayerId(req, res);
   recordHumanPageVisit({
     humanPlayerId,
-    pageId: pageState.page.id
+    pageId: pageState.page.dbId
   });
   pageState = getPageState(pageState.page.id);
   const modalOpen = input.modalOpen || req.query.byoclaw === "1";
@@ -192,7 +203,7 @@ function renderStoryResponse(req, res, pageId, input = {}) {
 
 function requireViewer(req, res, next) {
   if (!req.viewer) {
-    const pageId = parsePageId(req.body.pageId) || getRootPageId();
+    const pageId = parsePageId(req.body.pageId) || getRootPagePublicId();
     renderStoryResponse(req, res, pageId, {
       authError: "Sign in first to bring a claw.",
       modalOpen: true,
@@ -301,17 +312,17 @@ function createApp() {
   });
 
   app.get("/", (_req, res) => {
-    const rootPath = formatPath(getRootPageId());
+    const rootPath = formatPath(getRootPagePublicId());
     res.send(renderLandingPage(rootPath, getStoryPageCount()));
   });
 
   app.get("/page/:pageId", (req, res) => {
-    const pageId = parsePageId(req.params.pageId) || getRootPageId();
+    const pageId = parsePageId(req.params.pageId) || getRootPagePublicId();
     renderStoryResponse(req, res, pageId);
   });
 
   app.post("/auth/signup", (req, res) => {
-    const pageId = parsePageId(req.body.pageId) || getRootPageId();
+    const pageId = parsePageId(req.body.pageId) || getRootPagePublicId();
     const email = (req.body.email || "").trim().toLowerCase();
     const password = req.body.password || "";
     const returnTo = req.body.returnTo || formatPath(pageId);
@@ -357,7 +368,7 @@ function createApp() {
   });
 
   app.post("/auth/signin", (req, res) => {
-    const pageId = parsePageId(req.body.pageId) || getRootPageId();
+    const pageId = parsePageId(req.body.pageId) || getRootPagePublicId();
     const email = (req.body.email || "").trim().toLowerCase();
     const password = req.body.password || "";
     const returnTo = req.body.returnTo || formatPath(pageId);
@@ -387,21 +398,21 @@ function createApp() {
     }
 
     clearSessionCookie(res);
-    res.redirect(req.body.returnTo || formatPath(getRootPageId()));
+    res.redirect(req.body.returnTo || formatPath(getRootPagePublicId()));
   });
 
   app.post("/byoclaw/issue", requireViewer, (req, res) => {
-    const pageId = parsePageId(req.body.pageId) || getRootPageId();
+    const pageId = parsePageId(req.body.pageId) || getRootPagePublicId();
 
     renderStoryResponse(req, res, pageId, {
       issueGateway: true,
-      modalNotice: `Issued a temporary BYOClaw gateway for page ${pageId}.`,
+      modalNotice: "Issued a temporary BYOClaw gateway for this page.",
       modalOpen: true
     });
   });
 
   app.post("/byoclaw/revoke/:gatewayId", requireViewer, (req, res) => {
-    const pageId = parsePageId(req.body.pageId) || getRootPageId();
+    const pageId = parsePageId(req.body.pageId) || getRootPagePublicId();
     const gatewayId = req.params.gatewayId;
 
     if (!revokeGateway({ gatewayId, userId: req.viewer.id })) {
@@ -447,15 +458,17 @@ function createApp() {
     }
 
     const pageState = getPageState(auth.gateway.pageId, auth.gateway.gatewayId);
+    const publicPage = toPublicPage(pageState.page);
+    const publicOptions = toPublicOptions(pageState.options);
 
     res.json({
-      currentPageId: pageState.page.id,
+      currentPageId: publicPage.id,
       gateway: {
         expiresAt: auth.gateway.expiresAt,
         gatewayId: auth.gateway.gatewayId
       },
-      options: pageState.options,
-      page: pageState.page,
+      options: publicOptions,
+      page: publicPage,
       rootPageId: pageState.rootPageId
     });
   });
@@ -468,7 +481,7 @@ function createApp() {
     }
 
     const pageId = parsePageId(req.params.pageId);
-    if (!pageId) {
+    if (!pageId || !findPageIdByPublicId(pageId)) {
       errorResponse(res, 400, "CLAW_GATEWAY_SCOPE_FORBIDDEN", {
         message: "Invalid page id."
       });
@@ -476,17 +489,19 @@ function createApp() {
     }
 
     const pageState = getPageState(pageId, auth.gateway.gatewayId);
+    const publicPage = toPublicPage(pageState.page);
+    const publicOptions = toPublicOptions(pageState.options);
 
     res.json({
       breadcrumb: pageState.breadcrumb,
       instructions: {
         branchEnd:
-          pageState.options.length === 0
-            ? `${BASE_URL}/api/claw/proposals?parentPageId=${pageState.page.id}`
+          publicOptions.length === 0
+            ? `${BASE_URL}/api/claw/proposals?parentPageId=${publicPage.id}`
             : "Follow options[].targetPageId into another page."
       },
-      options: pageState.options,
-      page: pageState.page,
+      options: publicOptions,
+      page: publicPage,
       rootPageId: pageState.rootPageId
     });
   });
@@ -499,14 +514,15 @@ function createApp() {
     }
 
     const pageId = parsePageId(req.query.parentPageId);
-    if (!pageId) {
+    if (!pageId || !findPageIdByPublicId(pageId)) {
       errorResponse(res, 400, "CLAW_GATEWAY_SCOPE_FORBIDDEN", {
-        message: "parentPageId must be a positive integer."
+        message: "parentPageId must be a valid page id."
       });
       return;
     }
 
     const pageState = getPageState(pageId, auth.gateway.gatewayId);
+    const publicPage = toPublicPage(pageState.page);
 
     res.json({
       branchEnd: pageState.options.length === 0,
@@ -514,7 +530,7 @@ function createApp() {
         create: "POST /api/claw/proposals",
         vote: "POST /api/claw/proposals/:id/vote"
       },
-      page: pageState.page,
+      page: publicPage,
       proposals: pageState.proposals
     });
   });
@@ -603,7 +619,7 @@ function createApp() {
 
   app.use((err, req, res, _next) => {
     console.error(err);
-    const pageId = parsePageId(req.params.pageId) || getRootPageId();
+    const pageId = parsePageId(req.params.pageId) || getRootPagePublicId();
     renderStoryResponse(req, res, pageId, {
       notice: "The application hit an unexpected error.",
       statusCode: 500
