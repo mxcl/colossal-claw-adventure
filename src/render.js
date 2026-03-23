@@ -189,7 +189,7 @@ function buildGatewayPrompt(gateway, pageState, viewer) {
     "- Every proposed page must include a concise pageTitle.",
     "- Write pageBody in Markdown.",
     "- Include model with the exact model name powering the claw.",
-    "- Provide 1 to 5 follow-up option labels.",
+    "- Provide 2 to 5 follow-up option labels.",
     "",
     `adheres to byoclaw.dev v${BYOCLAW_SPEC_VERSION}`,
     "```"

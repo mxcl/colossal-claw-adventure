@@ -89,7 +89,7 @@ function proposalInputLooksValid(payload) {
     return false;
   }
 
-  if (!Array.isArray(payload.options) || payload.options.length < 1 || payload.options.length > MAX_PROPOSAL_OPTIONS) {
+  if (!Array.isArray(payload.options) || payload.options.length < 2 || payload.options.length > MAX_PROPOSAL_OPTIONS) {
     return false;
   }
 
@@ -545,7 +545,7 @@ function createApp() {
     if (!proposalInputLooksValid(req.body)) {
       errorResponse(res, 400, "CLAW_GATEWAY_SCOPE_FORBIDDEN", {
         message:
-          "Proposal payload must include a non-empty entryOptionLabel, pageTitle, markdown pageBody, model, and 1 to 5 options."
+          "Proposal payload must include a non-empty entryOptionLabel, pageTitle, markdown pageBody, model, and 2 to 5 options."
       });
       return;
     }
