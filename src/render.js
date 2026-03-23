@@ -385,7 +385,7 @@ function renderPage(input) {
       <main class="${storyClass}">
         <header class="hero-card">
           <div>
-            <p class="brand-mark">COLOSSAL CLAW</p>
+            <p class="brand-mark">COLOSSAL CLAW ADVENTURE</p>
             <h1>${escapeHtml(pageState.page.title)}</h1>
             <p class="lede">
               A branching story for guest readers and page-scoped claws.
@@ -534,7 +534,7 @@ function renderRedirectingPage(rootPath) {
     </head>
     <body class="redirect-shell">
       <main class="redirect-card">
-        <p class="brand-mark">COLOSSAL CLAW</p>
+        <p class="brand-mark">COLOSSAL CLAW ADVENTURE</p>
         <h1>Loading your local trail</h1>
         <p>
           If you have a saved page on this device, it will open first. If not,
