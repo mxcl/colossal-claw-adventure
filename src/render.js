@@ -446,6 +446,7 @@ function renderPage(input) {
                   : ""
               }
             </div>
+            ${renderSiteFooter()}
           </article>
           <aside class="panel side-panel">
             <span class="eyebrow">Local Play</span>
@@ -462,7 +463,6 @@ function renderPage(input) {
         </section>
         ${renderStoryOptions(pageState.options)}
         ${renderProposalList(pageState)}
-        ${renderSiteFooter()}
       </main>
       ${renderBringYourClawModal({
         ...modal,
