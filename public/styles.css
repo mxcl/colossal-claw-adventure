@@ -406,6 +406,7 @@ textarea {
 
 .primary-btn,
 .secondary-btn,
+.ghost-btn,
 .mini-btn,
 .close-btn {
   appearance: none;
@@ -425,6 +426,10 @@ textarea {
   background: var(--green);
 }
 
+.ghost-btn {
+  background: transparent;
+}
+
 .mini-btn {
   background: white;
   font-size: 0.9rem;
@@ -442,6 +447,7 @@ textarea {
 
 .primary-btn:hover,
 .secondary-btn:hover,
+.ghost-btn:hover,
 .mini-btn:hover,
 .close-btn:hover {
   transform: translate(-2px, -2px);

@@ -435,7 +435,7 @@ function renderPage(input) {
               viewer
                 ? `<form method="post" action="/auth/signout">
                     <input type="hidden" name="returnTo" value="${currentPath}">
-                    <button class="primary-btn" type="submit">
+                    <button class="ghost-btn" type="submit">
                       Sign Out ${escapeHtml(viewer.email)}
                     </button>
                   </form>`
