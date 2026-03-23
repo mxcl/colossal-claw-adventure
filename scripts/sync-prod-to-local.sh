@@ -13,7 +13,7 @@ REMOTE_TMP_PATH="/tmp/${APP_NAME}.sync.sqlite"
 
 usage() {
   cat <<EOF
-Usage: scripts/sync.sh [pull|push] [user@host]
+Usage: scripts/sync-prod-to-local.sh [pull|push] [user@host]
 EOF
 }
 

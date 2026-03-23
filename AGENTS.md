@@ -21,7 +21,7 @@ The application is implemented as a `node/express` system.
 - SQLite is the production database and stays on that instance as a
   single-writer datastore
 - `./scripts/deploy.sh` deploys the application to the EC2 host
-- `./scripts/sync.sh` syncs the SQLite database between AWS and local
+- `./scripts/sync-prod-to-local.sh` syncs the SQLite database between AWS and local
   development
 
 ## UI Style
