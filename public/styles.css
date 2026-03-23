@@ -398,6 +398,11 @@ textarea {
   z-index: 5;
 }
 
+.modal-backdrop[hidden],
+.resume-banner[hidden] {
+  display: none;
+}
+
 .modal-card {
   width: min(1080px, 100%);
   max-height: calc(100vh - 2rem);
