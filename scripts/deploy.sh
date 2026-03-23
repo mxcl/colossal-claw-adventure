@@ -3,6 +3,15 @@ set -euo pipefail
 
 APP_NAME="colossal-claw-adventure"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PRODUCTION_ENV_FILE="${ROOT_DIR}/.env.production"
+
+if [[ -f "${PRODUCTION_ENV_FILE}" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "${PRODUCTION_ENV_FILE}"
+  set +a
+fi
+
 REMOTE="${1:-${DEPLOY_HOST:-}}"
 DEPLOY_PORT="${DEPLOY_PORT:-22}"
 REMOTE_APP_DIR="${REMOTE_APP_DIR:-/opt/${APP_NAME}}"
@@ -22,6 +31,7 @@ usage() {
 Usage: scripts/deploy.sh [user@host]
 
 Environment overrides:
+  .env.production    Auto-loaded if present from repo root
   DEPLOY_HOST         Default SSH target if no positional host is given
   DEPLOY_PORT         SSH port
   REMOTE_APP_DIR      Remote app directory

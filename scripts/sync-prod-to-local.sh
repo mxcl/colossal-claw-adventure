@@ -3,6 +3,15 @@ set -euo pipefail
 
 APP_NAME="colossal-claw-adventure"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PRODUCTION_ENV_FILE="${ROOT_DIR}/.env.production"
+
+if [[ -f "${PRODUCTION_ENV_FILE}" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "${PRODUCTION_ENV_FILE}"
+  set +a
+fi
+
 ACTION="${1:-pull}"
 REMOTE="${2:-${DEPLOY_HOST:-}}"
 DEPLOY_PORT="${DEPLOY_PORT:-22}"
@@ -14,6 +23,7 @@ REMOTE_TMP_PATH="/tmp/${APP_NAME}.sync.sqlite"
 usage() {
   cat <<EOF
 Usage: scripts/sync-prod-to-local.sh [pull|push] [user@host]
+.env.production is auto-loaded from the repo root if present.
 EOF
 }
 
