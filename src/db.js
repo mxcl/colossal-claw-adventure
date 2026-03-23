@@ -949,6 +949,7 @@ function getPageState(pageId, voterClawId = null, includeProposalDetails = false
       humanVisitorCount: currentPageHumanVisitorCount,
       id: loaded.page.publicId,
       isStub: loaded.page.isStub === 1,
+      parentHumanVisitorCount: parentPageHumanVisitorCount,
       parentPageDbId: loaded.page.parentPageDbId,
       parentPageId: loaded.page.parentPagePublicId,
       title: loaded.page.title

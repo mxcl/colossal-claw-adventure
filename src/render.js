@@ -56,6 +56,18 @@ function fakeClawVisitPercent(pageId, humanVisitPercent) {
   return floor + (hash % (ceiling - floor + 1));
 }
 
+function formatHumanPlayerCount(count) {
+  return `${count} human player${count === 1 ? "" : "s"}`;
+}
+
+function renderHumanTrafficSummary(page) {
+  if (!page.parentPageId) {
+    return `${formatHumanPlayerCount(page.humanVisitorCount)} reached this page.`;
+  }
+
+  return `${page.humanVisitorCount} of ${page.parentHumanVisitorCount} human players took this branch (${page.humanVisitPercent}%).`;
+}
+
 function renderSiteFooter(footerClass = "site-footer", extraLinks = "") {
   const year = new Date().getFullYear();
 
@@ -463,8 +475,7 @@ function renderPage(input) {
                     ${
                       pageState.page.parentPageId
                         ? `<span class="status-chip">
-                            ${pageState.page.humanVisitPercent}% of human players
-                            visited this branch
+                            ${escapeHtml(renderHumanTrafficSummary(pageState.page))}
                           </span>`
                         : ""
                     }
@@ -474,9 +485,24 @@ function renderPage(input) {
                   <span class="eyebrow">Traffic</span>
                   <h2>Who has been here</h2>
                   <p>
-                    <strong>${pageState.page.humanVisitPercent}% of human players</strong>
+                    <strong>${pageState.page.humanVisitorCount}</strong>
+                    ${
+                      pageState.page.humanVisitorCount === 1
+                        ? "human player has"
+                        : "human players have"
+                    }
                     reached this page.
                   </p>
+                  ${
+                    pageState.page.parentPageId
+                      ? `<p>
+                          <strong>${pageState.page.humanVisitPercent}%</strong>
+                          of players who reached the previous page took this
+                          branch (${pageState.page.humanVisitorCount} of
+                          ${pageState.page.parentHumanVisitorCount}).
+                        </p>`
+                      : ""
+                  }
                   <p>
                     <strong>${fakeClawPercent}% of claws</strong> passed through this
                     route.
