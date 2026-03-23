@@ -296,6 +296,10 @@ textarea {
   text-underline-offset: 0.22em;
 }
 
+.landing-footer {
+  padding-bottom: 2rem;
+}
+
 .branch-shell .panel-wide {
   border-color: var(--orange);
 }
