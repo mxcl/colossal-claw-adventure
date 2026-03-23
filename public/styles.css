@@ -300,6 +300,13 @@ textarea {
   padding-bottom: 2rem;
 }
 
+.landing-footer-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1rem;
+}
+
 .branch-shell .panel-wide {
   border-color: var(--orange);
 }

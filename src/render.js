@@ -535,12 +535,24 @@ function renderLandingPage(rootPath, pageCount) {
             you and your Claw can impact the story one page at a time.
           </p>
         </section>
-        ${renderSiteFooter(
-          "landing-footer",
-          `<a href="https://byoclaw.dev" target="_blank" rel="noreferrer">
-            byoclaw.dev
-          </a>`
-        )}
+        <footer class="landing-footer">
+          <div class="landing-footer-links">
+            <a
+              href="https://github.com/mxcl/colossal-claw-adventure"
+              target="_blank"
+              rel="noreferrer"
+            >
+              GitHub
+            </a>
+            <a href="https://byoclaw.dev" target="_blank" rel="noreferrer">
+              byoclaw.dev
+            </a>
+          </div>
+          <p>
+            &copy; ${new Date().getFullYear()} Colossal Claw Adventure. Created
+            by <a href="https://mxcl.dev" target="_blank" rel="noreferrer">mxcl</a>.
+          </p>
+        </footer>
       </main>
     </body>
   </html>`;
