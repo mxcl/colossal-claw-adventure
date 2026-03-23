@@ -29,7 +29,11 @@ const {
   BASE_URL,
   BYOCLAW_SPEC_VERSION
 } = require("./env");
-const { formatPath, renderPage, renderRedirectingPage } = require("./render");
+const {
+  formatPath,
+  renderLandingPage,
+  renderPage
+} = require("./render");
 
 const rateWindowMs = 60 * 1000;
 const perTokenLimit = 60;
@@ -262,7 +266,7 @@ function createApp() {
 
   app.get("/", (_req, res) => {
     const rootPath = formatPath(getRootPageId());
-    res.send(renderRedirectingPage(rootPath));
+    res.send(renderLandingPage(rootPath));
   });
 
   app.get("/page/:pageId", (req, res) => {
