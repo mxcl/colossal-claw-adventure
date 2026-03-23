@@ -152,6 +152,7 @@ function createDatabase() {
   migrateProposalModels(db);
   migrateLegacyStoryTitles(db);
   migrateStoryPagePublicIds(db);
+  migrateApprovedStubWrappers(db);
   seedIfEmpty(db);
   migrateStoryPagePublicIds(db);
   return db;
@@ -440,6 +441,194 @@ function migrateLegacyStoryTitles(database) {
       `
     )
     .run(ROOT_PAGE_TITLE, LEGACY_ROOT_PAGE_TITLE);
+}
+
+function mergeHumanPageVisits(database, fromPageId, toPageId) {
+  database
+    .prepare(
+      `
+      INSERT OR IGNORE INTO human_page_visits (human_player_id, page_id, created_at)
+      SELECT human_player_id, ?, created_at
+      FROM human_page_visits
+      WHERE page_id = ?
+      `
+    )
+    .run(toPageId, fromPageId);
+
+  database
+    .prepare(
+      `
+      DELETE FROM human_page_visits
+      WHERE page_id = ?
+      `
+    )
+    .run(fromPageId);
+}
+
+function migrateApprovedStubWrappers(database) {
+  const wrappers = database
+    .prepare(
+      `
+      SELECT
+        stub.id AS stubPageId,
+        proposal.page_title AS pageTitle,
+        proposal.page_body AS pageBody,
+        proposal.approved_page_id AS approvedPageId
+      FROM story_pages stub
+      INNER JOIN proposals proposal
+        ON proposal.parent_page_id = stub.id
+      WHERE stub.is_stub = 1
+        AND proposal.status = 'approved'
+        AND proposal.approved_page_id IS NOT NULL
+      ORDER BY stub.id ASC
+      `
+    )
+    .all();
+
+  if (!wrappers.length) {
+    return;
+  }
+
+  const migrate = database.transaction(() => {
+    for (const wrapper of wrappers) {
+      const shape = database
+        .prepare(
+          `
+          SELECT
+            approved.parent_page_id AS approvedParentPageId,
+            approved.is_stub AS approvedIsStub,
+            (
+              SELECT COUNT(*)
+              FROM page_options
+              WHERE page_id = stub.id
+            ) AS stubOptionCount,
+            (
+              SELECT COUNT(*)
+              FROM page_options
+              WHERE page_id = stub.id
+                AND target_page_id = approved.id
+            ) AS linkCount,
+            (
+              SELECT COUNT(*)
+              FROM page_options
+              WHERE target_page_id = approved.id
+            ) AS incomingApprovedLinkCount,
+            (
+              SELECT COUNT(*)
+              FROM proposals
+              WHERE parent_page_id = approved.id
+            ) AS approvedProposalCount
+          FROM story_pages stub
+          INNER JOIN story_pages approved
+            ON approved.id = ?
+          WHERE stub.id = ?
+          `
+        )
+        .get(wrapper.approvedPageId, wrapper.stubPageId);
+
+      if (!shape) {
+        continue;
+      }
+
+      const isWrapperShape =
+        shape.approvedParentPageId === wrapper.stubPageId &&
+        shape.approvedIsStub === 0 &&
+        shape.stubOptionCount === 1 &&
+        shape.linkCount === 1 &&
+        shape.incomingApprovedLinkCount === 1 &&
+        shape.approvedProposalCount === 0;
+
+      if (!isWrapperShape) {
+        continue;
+      }
+
+      database
+        .prepare(
+          `
+          DELETE FROM page_options
+          WHERE page_id = ?
+            AND target_page_id = ?
+          `
+        )
+        .run(wrapper.stubPageId, wrapper.approvedPageId);
+
+      database
+        .prepare(
+          `
+          UPDATE page_options
+          SET page_id = ?
+          WHERE page_id = ?
+          `
+        )
+        .run(wrapper.stubPageId, wrapper.approvedPageId);
+
+      database
+        .prepare(
+          `
+          UPDATE story_pages
+          SET parent_page_id = ?
+          WHERE parent_page_id = ?
+          `
+        )
+        .run(wrapper.stubPageId, wrapper.approvedPageId);
+
+      mergeHumanPageVisits(database, wrapper.approvedPageId, wrapper.stubPageId);
+
+      database
+        .prepare(
+          `
+          UPDATE claw_gateways
+          SET page_id = ?
+          WHERE page_id = ?
+          `
+        )
+        .run(wrapper.stubPageId, wrapper.approvedPageId);
+
+      database
+        .prepare(
+          `
+          UPDATE claws
+          SET last_join_page_id = ?
+          WHERE last_join_page_id = ?
+          `
+        )
+        .run(wrapper.stubPageId, wrapper.approvedPageId);
+
+      database
+        .prepare(
+          `
+          UPDATE proposals
+          SET approved_page_id = ?
+          WHERE approved_page_id = ?
+          `
+        )
+        .run(wrapper.stubPageId, wrapper.approvedPageId);
+
+      database
+        .prepare(
+          `
+          UPDATE story_pages
+          SET
+            title = ?,
+            body = ?,
+            is_stub = 0
+          WHERE id = ?
+          `
+        )
+        .run(wrapper.pageTitle, wrapper.pageBody, wrapper.stubPageId);
+
+      database
+        .prepare(
+          `
+          DELETE FROM story_pages
+          WHERE id = ?
+          `
+        )
+        .run(wrapper.approvedPageId);
+    }
+  });
+
+  migrate();
 }
 
 function getRootPageId() {
@@ -1224,6 +1413,20 @@ function approveProposal(proposalId) {
     return;
   }
 
+  const parentPage = db
+    .prepare(
+      `
+      SELECT is_stub AS isStub
+      FROM story_pages
+      WHERE id = ?
+      `
+    )
+    .get(proposal.parentPageId);
+
+  if (!parentPage) {
+    return;
+  }
+
   const options = db
     .prepare(
       `
@@ -1236,24 +1439,40 @@ function approveProposal(proposalId) {
     .all(proposalId);
 
   const transaction = db.transaction(() => {
-    const newPageId = insertStoryPage(db, {
-      parentPageId: proposal.parentPageId,
-      title: proposal.pageTitle,
-      body: proposal.pageBody,
-      isStub: 0
-    });
+    const materializedPageId =
+      parentPage.isStub === 1
+        ? proposal.parentPageId
+        : insertStoryPage(db, {
+            parentPageId: proposal.parentPageId,
+            title: proposal.pageTitle,
+            body: proposal.pageBody,
+            isStub: 0
+          });
 
-    db.prepare(
-      `
-      INSERT INTO page_options (page_id, label, target_page_id, sort_order)
-      VALUES (?, ?, ?, ?)
-      `
-    ).run(
-      proposal.parentPageId,
-      proposal.entryOptionLabel,
-      newPageId,
-      nextOptionSortOrder(proposal.parentPageId)
-    );
+    if (parentPage.isStub === 1) {
+      db.prepare(
+        `
+        UPDATE story_pages
+        SET
+          title = ?,
+          body = ?,
+          is_stub = 0
+        WHERE id = ?
+        `
+      ).run(proposal.pageTitle, proposal.pageBody, materializedPageId);
+    } else {
+      db.prepare(
+        `
+        INSERT INTO page_options (page_id, label, target_page_id, sort_order)
+        VALUES (?, ?, ?, ?)
+        `
+      ).run(
+        proposal.parentPageId,
+        proposal.entryOptionLabel,
+        materializedPageId,
+        nextOptionSortOrder(proposal.parentPageId)
+      );
+    }
 
     const insertOption = db.prepare(
       `
@@ -1264,14 +1483,14 @@ function approveProposal(proposalId) {
 
     options.forEach((option, index) => {
       const stubPageId = insertStoryPage(db, {
-        parentPageId: newPageId,
+        parentPageId: materializedPageId,
         title: "Uncharted Path",
         body: `Branch seeded by option: "${option.label}". A claw must canonize the next scene.`,
         isStub: 1
       });
 
       insertOption.run(
-        newPageId,
+        materializedPageId,
         option.label,
         stubPageId,
         index + 1
@@ -1286,7 +1505,7 @@ function approveProposal(proposalId) {
         approved_page_id = ?
       WHERE id = ?
       `
-    ).run(newPageId, proposalId);
+    ).run(materializedPageId, proposalId);
   });
 
   transaction();
