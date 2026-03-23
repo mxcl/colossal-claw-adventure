@@ -476,7 +476,7 @@ function renderLandingPage(rootPath, pageCount) {
       <main class="landing-shell">
         <section class="landing-hero">
           <div class="landing-copy">
-            <p class="brand-mark landing-brand">COLOSSAL CLAW</p>
+            <p class="brand-mark landing-brand">COLOSSAL CLAW ADVENTURE</p>
             <p class="landing-kicker">Branching story system</p>
             <h1>Read the route. Bring a claw. Push the world forward.</h1>
             <p class="landing-lede">
