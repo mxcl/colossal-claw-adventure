@@ -1,71 +1,114 @@
-# AWS Hosting Guide (SQLite + Next.js)
+# AWS Hosting Guide (Cheap EC2 + SQLite)
 
 ## Target Architecture
 
-- Dockerized Next.js app (this repository)
-- ECS Fargate service behind an ALB
-- EFS mounted at `/data` for persistent SQLite storage
-- Route53 or direct DNS CNAME to ALB
+- One low-cost EC2 instance for the whole application
+- One SQLite database file stored on that instance
+- One `node/express` process managed by `systemd`
+- One deploy path over SSH and `rsync`
+- One separate sync path for moving the SQLite file between AWS and local
+  development
 
-SQLite is a single-writer database, so run exactly one app task for writes.
+SQLite is a single-writer database, so production should stay on one app
+instance.
 
-## 1) Prepare Environment Variables
+## Recommended Shape
 
-Use values from `.env.example` and set production secrets in AWS:
+- Prefer an inexpensive burstable instance such as `t4g.nano`
+- Use a small general-purpose SSD volume
+- Keep the design intentionally simple instead of introducing a separate
+  database service
 
-- `GOOGLE_CLIENT_ID`
-- `GOOGLE_CLIENT_SECRET`
-- `NEXTAUTH_SECRET`
-- `NEXTAUTH_URL`
-- `OPENCLAW_API_TOKEN`
-- `SQLITE_DB_PATH=/data/colossal-claw-adventure.sqlite`
+If you need x86 instead of Arm, use the closest low-cost equivalent and keep
+the single-instance model.
 
-For your current OAuth redirect host, set:
+## Server Prerequisites
 
-- `NEXTAUTH_URL=http://pangolin.tailc7871c.ts.net:<PORT>`
+Install these tools on the EC2 host before the first deploy:
 
-## 2) Google OAuth Redirect URI
+- `node`
+- `npm`
+- `sqlite3`
+- `rsync`
+- `systemd`
 
-In Google Cloud Console, authorize this redirect URI:
-
-- `http://pangolin.tailc7871c.ts.net:<PORT>/api/auth/callback/google`
-
-Use the exact port that fronts your AWS service.
-
-## 3) Build And Push Container
+Create a writable data directory for the SQLite file:
 
 ```bash
-aws ecr create-repository --repository-name colossal-claw-adventure
-aws ecr get-login-password --region us-east-1 | \
-  docker login --username AWS --password-stdin <ACCOUNT>.dkr.ecr.us-east-1.amazonaws.com
-
-docker build -t colossal-claw-adventure .
-docker tag colossal-claw-adventure:latest \
-  <ACCOUNT>.dkr.ecr.us-east-1.amazonaws.com/colossal-claw-adventure:latest
-docker push <ACCOUNT>.dkr.ecr.us-east-1.amazonaws.com/colossal-claw-adventure:latest
+sudo mkdir -p /var/lib/colossal-claw-adventure
+sudo chown ec2-user:ec2-user /var/lib/colossal-claw-adventure
 ```
 
-## 4) ECS Task Definition
+Create the production environment file:
 
-Configure one container with:
+```bash
+sudo touch /etc/colossal-claw-adventure.env
+sudo chmod 600 /etc/colossal-claw-adventure.env
+```
 
-- image from ECR
-- container port `3000`
-- environment vars from step 1
-- EFS volume mounted at `/data`
-- command default from Docker image (`/app/start-server.sh`)
+Add the production variables you need, including:
 
-Set desired count to `1` to avoid SQLite multi-writer conflicts.
+- `SQLITE_DB_PATH=/var/lib/colossal-claw-adventure/colossal-claw-adventure.sqlite`
+- session secrets
+- email/password auth secrets
+- BYOClaw auth secrets
 
-## 5) Networking
+## Deploy
 
-- Place ALB in public subnets
-- Place ECS service in private subnets with NAT
-- Add ALB listener rule to forward to ECS target group
-- Point DNS (`pangolin.tailc7871c.ts.net`) at the ALB
+Use the deploy script from the repository root:
 
-## 6) Runbook Notes
+```bash
+./scripts/deploy.sh ec2-user@YOUR_HOST
+```
 
-- Back up `/data/colossal-claw-adventure.sqlite` regularly
-- Keep `OPENCLAW_API_TOKEN` rotated
-- Scale reads by cache/CDN, not by multiple app writers
+Optional environment overrides:
+
+- `DEPLOY_PORT`
+- `REMOTE_APP_DIR`
+- `REMOTE_DATA_DIR`
+- `REMOTE_ENV_FILE`
+- `REMOTE_SERVICE`
+
+The deploy script:
+
+- syncs the repo to the EC2 host with `rsync`
+- ensures the app and data directories exist
+- creates or updates a `systemd` service
+- runs `npm ci`
+- runs the production build
+- restarts the app service
+
+## Sync The Database
+
+Use the sync script when you need the SQLite data locally or when you need to
+push a local snapshot back to the EC2 instance.
+
+Pull production data down to local development:
+
+```bash
+./scripts/sync.sh pull ec2-user@YOUR_HOST
+```
+
+Push a local snapshot back to AWS:
+
+```bash
+./scripts/sync.sh push ec2-user@YOUR_HOST
+```
+
+Optional environment overrides:
+
+- `LOCAL_DB_PATH`
+- `REMOTE_DB_PATH`
+- `REMOTE_SERVICE`
+- `DEPLOY_PORT`
+
+The sync script uses SQLite backups so the transferred database is a clean
+copy rather than a raw live file grab.
+
+## Operational Notes
+
+- Keep only one production instance running
+- Back up the SQLite file regularly
+- Treat `push` syncs as operational changes because they overwrite the remote
+  database
+- Use the sync script for data movement and keep normal deploys code-only

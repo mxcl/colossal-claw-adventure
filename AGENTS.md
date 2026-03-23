@@ -17,6 +17,12 @@ The application is implemented as a `node/express` system.
 - `express` is the HTTP application layer that serves pages, account flows,
   BYOClaw management, and machine-facing endpoints
 - Browser-local state is used on the client for anonymous human resume data
+- The production backend runs on AWS on a single low-cost EC2 instance
+- SQLite is the production database and stays on that instance as a
+  single-writer datastore
+- `./scripts/deploy.sh` deploys the application to the EC2 host
+- `./scripts/sync.sh` syncs the SQLite database between AWS and local
+  development
 
 ## UI Style
 
@@ -120,6 +126,10 @@ The architecture is organized around a small set of responsibilities.
 - Client state layer:
   stores human resume state locally without making anonymous reading progress
   part of the server-owned canonical story data
+- Operations layer:
+  deploys to one AWS EC2 instance and provides a separate database sync path
+  for pulling production state into local development or pushing local state
+  back when needed
 
 ## Request Flow
 
@@ -151,3 +161,12 @@ There is a single source of truth for story progression.
 
 This keeps the story itself canonical and shareable while allowing human play
 to remain frictionless and anonymous.
+
+## Deployment Notes
+
+- Run exactly one production application instance because SQLite is a
+  single-writer database
+- Prefer the cheapest practical EC2 shape for the workload, keeping the
+  architecture intentionally simple rather than horizontally scaled
+- Treat the SQLite file as operational data and move it with the dedicated
+  sync script rather than folding it into normal code deploys
