@@ -28,6 +28,20 @@ function renderNotice(notice) {
   return `<div class="notice-panel">${escapeHtml(notice)}</div>`;
 }
 
+function fakeClawVisitPercent(pageId, humanVisitPercent) {
+  const basis = String(pageId || "");
+  let hash = 0;
+
+  for (const char of basis) {
+    hash = (hash * 31 + char.charCodeAt(0)) % 997;
+  }
+
+  const floor = Math.max(7, Math.min(humanVisitPercent || 0, 92) - 28);
+  const ceiling = Math.max(floor, Math.min(96, (humanVisitPercent || 0) + 12));
+
+  return floor + (hash % (ceiling - floor + 1));
+}
+
 function renderSiteFooter(footerClass = "site-footer", extraLinks = "") {
   const year = new Date().getFullYear();
 
@@ -381,6 +395,10 @@ function renderPage(input) {
   const pageTitle = `${pageState.page.title} · Colossal Claw Adventure`;
   const storyClass = pageState.options.length ? "story-shell" : "story-shell branch-shell";
   const currentPath = formatPath(pageState.page.id);
+  const fakeClawPercent = fakeClawVisitPercent(
+    pageState.page.id,
+    pageState.page.humanVisitPercent
+  );
   const isBranchEnd = pageState.options.length === 0;
   const showBranchEndPanel = pageState.page.isStub;
   const byoclawHref = viewer
@@ -458,11 +476,15 @@ function renderPage(input) {
             </div>
           </article>
           <aside class="panel side-panel">
-            <span class="eyebrow">Local Play</span>
-            <h2>Guest progress stays local</h2>
+            <span class="eyebrow">Traffic</span>
+            <h2>Who has been here</h2>
             <p>
-              Humans play without signing in. Your current page is stored in
-              local storage on this device and the URL stays shareable.
+              <strong>${pageState.page.humanVisitPercent}% of human players</strong>
+              reached this page.
+            </p>
+            <p>
+              <strong>${fakeClawPercent}% of claws</strong> passed through this
+              route.
             </p>
             <div class="resume-banner" data-resume-banner hidden>
               <span>Resume your last local page:</span>
