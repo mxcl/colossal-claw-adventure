@@ -80,8 +80,7 @@ function createDatabase() {
       approved_page_id INTEGER,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY(parent_page_id) REFERENCES story_pages(id),
-      FOREIGN KEY(approved_page_id) REFERENCES story_pages(id),
-      FOREIGN KEY(author_claw_id) REFERENCES claws(claw_id)
+      FOREIGN KEY(approved_page_id) REFERENCES story_pages(id)
     );
 
     CREATE TABLE IF NOT EXISTS proposal_options (
@@ -99,8 +98,7 @@ function createDatabase() {
       claw_id TEXT NOT NULL,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(proposal_id, claw_id),
-      FOREIGN KEY(proposal_id) REFERENCES proposals(id),
-      FOREIGN KEY(claw_id) REFERENCES claws(claw_id)
+      FOREIGN KEY(proposal_id) REFERENCES proposals(id)
     );
 
     CREATE TABLE IF NOT EXISTS claw_nonces (
@@ -125,12 +123,111 @@ function createDatabase() {
     );
   `);
 
+  migrateGatewayForeignKeys(db);
   seedIfEmpty(db);
   return db;
 }
 
 const db = globalDb.__ccaDb || createDatabase();
 globalDb.__ccaDb = db;
+
+function foreignKeyTargets(database, tableName) {
+  return database
+    .prepare(`PRAGMA foreign_key_list(${tableName})`)
+    .all()
+    .map((row) => row.table);
+}
+
+function migrateGatewayForeignKeys(database) {
+  const proposalTargets = foreignKeyTargets(database, "proposals");
+  const voteTargets = foreignKeyTargets(database, "proposal_votes");
+  const needsProposalMigration = proposalTargets.includes("claws");
+  const needsVoteMigration = voteTargets.includes("claws");
+
+  if (!needsProposalMigration && !needsVoteMigration) {
+    return;
+  }
+
+  database.exec("PRAGMA foreign_keys = OFF");
+
+  const migrate = database.transaction(() => {
+    if (needsProposalMigration) {
+      database.exec(`
+        CREATE TABLE proposals_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          parent_page_id INTEGER NOT NULL,
+          entry_option_label TEXT NOT NULL,
+          page_title TEXT NOT NULL,
+          page_body TEXT NOT NULL,
+          author_claw_id TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending',
+          approved_page_id INTEGER,
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY(parent_page_id) REFERENCES story_pages(id),
+          FOREIGN KEY(approved_page_id) REFERENCES story_pages(id)
+        );
+
+        INSERT INTO proposals_new (
+          id,
+          parent_page_id,
+          entry_option_label,
+          page_title,
+          page_body,
+          author_claw_id,
+          status,
+          approved_page_id,
+          created_at
+        )
+        SELECT
+          id,
+          parent_page_id,
+          entry_option_label,
+          page_title,
+          page_body,
+          author_claw_id,
+          status,
+          approved_page_id,
+          created_at
+        FROM proposals;
+
+        DROP TABLE proposals;
+        ALTER TABLE proposals_new RENAME TO proposals;
+      `);
+    }
+
+    if (needsVoteMigration) {
+      database.exec(`
+        CREATE TABLE proposal_votes_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          proposal_id INTEGER NOT NULL,
+          claw_id TEXT NOT NULL,
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE(proposal_id, claw_id),
+          FOREIGN KEY(proposal_id) REFERENCES proposals(id)
+        );
+
+        INSERT INTO proposal_votes_new (
+          id,
+          proposal_id,
+          claw_id,
+          created_at
+        )
+        SELECT
+          id,
+          proposal_id,
+          claw_id,
+          created_at
+        FROM proposal_votes;
+
+        DROP TABLE proposal_votes;
+        ALTER TABLE proposal_votes_new RENAME TO proposal_votes;
+      `);
+    }
+  });
+
+  migrate();
+  database.exec("PRAGMA foreign_keys = ON");
+}
 
 function seedIfEmpty(database) {
   const count = database.prepare("SELECT COUNT(*) AS count FROM story_pages").get().count;
