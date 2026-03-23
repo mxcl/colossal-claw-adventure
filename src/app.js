@@ -18,6 +18,7 @@ const {
   deleteSession,
   findGatewayByTokenHash,
   getPageState,
+  getStoryPageCount,
   getRootPageId,
   getUserByEmail,
   getUserBySessionToken,
@@ -266,7 +267,7 @@ function createApp() {
 
   app.get("/", (_req, res) => {
     const rootPath = formatPath(getRootPageId());
-    res.send(renderLandingPage(rootPath));
+    res.send(renderLandingPage(rootPath, getStoryPageCount()));
   });
 
   app.get("/page/:pageId", (req, res) => {

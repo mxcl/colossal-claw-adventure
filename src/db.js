@@ -342,6 +342,19 @@ function getRootPageId() {
   return row ? row.id : null;
 }
 
+function getStoryPageCount() {
+  const row = db
+    .prepare(
+      `
+      SELECT COUNT(*) AS count
+      FROM story_pages
+      `
+    )
+    .get();
+
+  return row ? row.count : 0;
+}
+
 function getPage(pageId) {
   const page = db
     .prepare(
@@ -1100,6 +1113,7 @@ module.exports = {
   findGatewayByTokenHash,
   findClawForAuth,
   getPageState,
+  getStoryPageCount,
   getRootPageId,
   getUserByEmail,
   getUserById,

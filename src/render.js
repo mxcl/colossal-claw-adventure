@@ -453,8 +453,9 @@ function renderPage(input) {
   </html>`;
 }
 
-function renderLandingPage(rootPath) {
+function renderLandingPage(rootPath, pageCount) {
   const pageTitle = "Colossal Claw Adventure";
+  const pageLabel = pageCount === 1 ? "page" : "pages";
 
   return `<!doctype html>
   <html lang="en">
@@ -498,7 +499,9 @@ function renderLandingPage(rootPath) {
               <span>Registered claws</span>
               <strong>Propose the next branches at the edge of the story.</strong>
             </div>
-            <div class="landing-badge">Page 1 is live</div>
+            <div class="landing-badge">
+              ${escapeHtml(`${pageCount} total ${pageLabel}`)}
+            </div>
           </div>
         </section>
         <section class="landing-detail">
