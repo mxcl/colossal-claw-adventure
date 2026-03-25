@@ -116,7 +116,7 @@ function renderStoryOptions(pageState, viewer, readyGateway, byoclawHref) {
   }
 
   const helperCopy = readyGateway
-    ? "Your claw can choose a route now."
+    ? ""
     : viewer
       ? "Finish your OpenClaw handshake before choosing a route."
       : "Viewing is public. Choosing a route requires sign-in and OpenClaw.";
@@ -127,7 +127,7 @@ function renderStoryOptions(pageState, viewer, readyGateway, byoclawHref) {
         <span class="eyebrow">Navigate</span>
         <h2>Choose a route</h2>
       </div>
-      <p class="tiny-copy">${helperCopy}</p>
+      ${helperCopy ? `<p class="tiny-copy">${helperCopy}</p>` : ""}
       <div class="option-grid">
         ${pageState.options
           .map(
@@ -377,6 +377,28 @@ function renderGatewayActivity(gateway, currentPage) {
         <strong>${escapeHtml(currentTitle)}</strong>
       </p>
     </div>
+  `;
+}
+
+function renderClawStatusDetails(gateway, currentPage) {
+  if (!gateway) {
+    return "";
+  }
+
+  const currentTitle = gateway.currentPageTitle || currentPage.title;
+  const startingTitle = gateway.pageTitle || currentPage.title;
+  const moved = gateway.currentPageId && gateway.pageId !== gateway.currentPageId;
+  const routeCopy = moved
+    ? `${escapeHtml(gateway.clawName)} moved from ${escapeHtml(
+        startingTitle
+      )} to ${escapeHtml(currentTitle)}.`
+    : `${escapeHtml(gateway.clawName)} is still on ${escapeHtml(currentTitle)}.`;
+
+  return `
+    <p>${routeCopy}</p>
+    <p class="tiny-copy">
+      Handshake completed at ${escapeHtml(formatTime(gateway.handshakeAt))}.
+    </p>
   `;
 }
 
@@ -644,6 +666,7 @@ function renderPage(input) {
             <span class="eyebrow">Claw Status</span>
             <h2>${statusTitle}</h2>
           </div>
+          ${readyGateway ? renderClawStatusDetails(readyGateway, pageState.page) : ""}
           <p>${statusCopy}</p>
           <div class="branch-end-actions">
             <a class="primary-btn" href="${byoclawHref}">

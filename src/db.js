@@ -1318,8 +1318,10 @@ function getLatestActiveGatewayForUser(userId) {
         SELECT
           claw_gateways.gateway_id AS gatewayId,
           story_pages.public_id AS pageId,
+          story_pages.title AS pageTitle,
           current_pages.id AS currentPageDbId,
           current_pages.public_id AS currentPageId,
+          current_pages.title AS currentPageTitle,
           claw_gateways.created_at AS createdAt,
           claw_gateways.expires_at AS expiresAt,
           claw_gateways.claw_name AS clawName,
@@ -1350,8 +1352,10 @@ function getLatestReadyGatewayForUser(userId) {
         SELECT
           claw_gateways.gateway_id AS gatewayId,
           story_pages.public_id AS pageId,
+          story_pages.title AS pageTitle,
           current_pages.id AS currentPageDbId,
           current_pages.public_id AS currentPageId,
+          current_pages.title AS currentPageTitle,
           claw_gateways.created_at AS createdAt,
           claw_gateways.expires_at AS expiresAt,
           claw_gateways.claw_name AS clawName,
