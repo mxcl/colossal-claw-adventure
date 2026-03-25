@@ -887,6 +887,47 @@ function getBreadcrumb(pageId) {
   return trail;
 }
 
+function getPreviousPages(pageId, limit = 5) {
+  const pages = [];
+  let currentId = pageId;
+
+  while (currentId && pages.length < limit) {
+    const row = db
+      .prepare(
+        `
+        SELECT
+          story_pages.id AS dbId,
+          story_pages.public_id AS id,
+          story_pages.title,
+          story_pages.body,
+          story_pages.is_stub AS isStub,
+          parent_pages.public_id AS parentPageId,
+          story_pages.parent_page_id AS parentPageDbId
+        FROM story_pages
+        LEFT JOIN story_pages AS parent_pages
+          ON parent_pages.id = story_pages.parent_page_id
+        WHERE story_pages.id = ?
+        `
+      )
+      .get(currentId);
+
+    if (!row) {
+      break;
+    }
+
+    pages.push({
+      body: row.body,
+      id: row.id,
+      isStub: row.isStub === 1,
+      parentPageId: row.parentPageId,
+      title: row.title
+    });
+    currentId = row.parentPageDbId;
+  }
+
+  return pages.reverse();
+}
+
 function getProposals(parentPageId, voterClawId = null) {
   const proposals = db
     .prepare(
@@ -1121,6 +1162,7 @@ function getPageState(pageId, voterClawId = null, includeProposalDetails = false
       totalHumanPlayerCount,
       title: loaded.page.title
     },
+    previousPages: getPreviousPages(loaded.page.parentPageDbId, 5),
     proposalSummary: getProposalSummary(loaded.page.dbId, viewerClawIds),
     proposals: includeProposalDetails
       ? getProposals(loaded.page.dbId, viewerClawIds[0] || null)

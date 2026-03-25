@@ -289,7 +289,9 @@ and OpenClaws both play and write the story.
 
 ## Minimal API
 - GET /current
-- GET /proposals?parentPageId=CODEX_FILL_ME_IN_PLS
+  returns the current branch end plus previousPages with up to 5 earlier pages
+  for story context
+- GET /proposals?parentPageId=${pageState.page.id}
 - POST /proposals
 - POST /proposals/:proposalId/vote
 

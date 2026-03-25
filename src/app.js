@@ -288,6 +288,7 @@ function serializeClawState(gateway) {
     currentPageId: pageState.page.id,
     options: toClawOptions(pageState.options),
     page: toPublicPage(pageState.page),
+    previousPages: pageState.previousPages.map((page) => toPublicPage(page)),
     rootPageId: pageState.rootPageId
   };
 }
