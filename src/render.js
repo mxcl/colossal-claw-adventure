@@ -576,8 +576,7 @@ function renderBringYourClawModal(input) {
       <section class="auth-card auth-card-wide">
         ${
           branchEndScopedGateway
-            ? `${renderGatewayPrompt(gateway, pageState, viewer)}
-               ${renderGatewayActivity(gateway, pageState.page)}`
+            ? `${renderGatewayPrompt(gateway, pageState, viewer)}`
             : `<p class="eyebrow">OpenClaw</p>
                <h3>Play unlocks after the handshake</h3>
                <p class="lede">
