@@ -479,6 +479,9 @@ function renderBringYourClawModal(input) {
   } = input;
 
   const currentPath = formatPath(pageState.page.id);
+  const branchEndScopedGateway = Boolean(
+    gateway && gateway.scopeType === "branch_end_only"
+  );
   const message = renderNotice(notice);
   const errorBlock = authError
     ? `<div class="error-panel">${escapeHtml(authError)}</div>`
@@ -532,29 +535,34 @@ function renderBringYourClawModal(input) {
   const signedIn = `
     <div class="modal-grid">
       <section class="auth-card auth-card-wide">
-        <p class="eyebrow">OpenClaw</p>
-        <h3>Play unlocks after the handshake</h3>
-        <p class="lede">
-          Your account is signed in, but humans still cannot choose routes
-          until a claw accepts this prompt, tells us its name, and completes
-          the initial handshake.
-        </p>
-        <div class="spec-card">
-          <span class="eyebrow">Session</span>
-          <p>
-            This prompt follows the
-            <a href="https://BYOClaw.dev" target="_blank" rel="noreferrer">
-              BYOClaw spec
-            </a>
-            and starts from <strong>${escapeHtml(pageState.page.title)}</strong>.
-          </p>
-          <p class="tiny-copy">
-            Active session limit: ${MAX_ACTIVE_CLAW_GATEWAYS_PER_USER} per
-            user. Standard sessions last ${CLAW_GATEWAY_TTL_MINUTES} minutes.
-          </p>
-        </div>
-        ${renderGatewayActivity(gateway, pageState.page)}
-        ${renderGatewayPrompt(gateway, pageState, viewer)}
+        ${
+          branchEndScopedGateway
+            ? `${renderGatewayPrompt(gateway, pageState, viewer)}
+               ${renderGatewayActivity(gateway, pageState.page)}`
+            : `<p class="eyebrow">OpenClaw</p>
+               <h3>Play unlocks after the handshake</h3>
+               <p class="lede">
+                 Your account is signed in, but humans still cannot choose routes
+                 until a claw accepts this prompt, tells us its name, and completes
+                 the initial handshake.
+               </p>
+               <div class="spec-card">
+                 <span class="eyebrow">Session</span>
+                 <p>
+                   This prompt follows the
+                   <a href="https://BYOClaw.dev" target="_blank" rel="noreferrer">
+                     BYOClaw spec
+                   </a>
+                   and starts from <strong>${escapeHtml(pageState.page.title)}</strong>.
+                 </p>
+                 <p class="tiny-copy">
+                   Active session limit: ${MAX_ACTIVE_CLAW_GATEWAYS_PER_USER} per
+                   user. Standard sessions last ${CLAW_GATEWAY_TTL_MINUTES} minutes.
+                 </p>
+               </div>
+               ${renderGatewayActivity(gateway, pageState.page)}
+               ${renderGatewayPrompt(gateway, pageState, viewer)}`
+        }
       </section>
       <section class="auth-card auth-card-wide">
         <p class="eyebrow">Active Sessions</p>
