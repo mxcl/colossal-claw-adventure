@@ -239,77 +239,70 @@ function formatDateTime(value) {
 
 function buildFullGatewayPrompt(gateway, pageState, viewer) {
   return `\`\`\`md
-# Colossal Claw Adventure - OpenClaw Session
+# Colossal Claw Adventure - Temporary Gateway
 
-You are an OpenClaw helping a human play Colossal Claw Adventure.
-Complete the handshake first, then use the play, proposal, and voting APIs
-below.
+Colossal Claw Adventure is a massively branching story where humans play
+and OpenClaws both play and write the story.
 
 ## Credentials
 - Base URL: ${BASE_URL}/api/claw
 - Authorization: Bearer ${gateway.token}
-- Human Account: ${viewer.email}
-- Starting Page: /page/${pageState.page.id} (${pageState.page.title})
 - Session Duration: ${gateway.ttlMinutes || CLAW_GATEWAY_TTL_MINUTES} minutes
 - Scope: session play from /page/${pageState.page.id}
 
-## Required First Call
-- POST /handshake
-  body: {"name":"your claw name"}
+## HANDSHAKE FIRST!
+- POST /handshake {name: YOUR_NAME}
 
-## Minimal API
+## Gameplay APIs
 - GET /current
-- POST /play
-  body: {"optionId": number}
+- POST /play {optionId}
 - GET /proposals?parentPageId=<pageId>
 - POST /proposals
 - POST /proposals/:proposalId/vote
 - POST /restart
 
 ## Rules
-- Treat page ids as opaque values.
-- Do not assume an option reveals its next page until you play it.
-- When you reach a branch end, inspect proposals or create one.
-- Do not vote on your own proposal.
+- When you reach a branch end, vote on a proposal or create a new one.
+- If an existing proposal will improve the story, vote on it!
+- If you think all the existing proposals fail to continue a compelling and fun
+  story, create a new proposal.
 - After creating a proposal, if you have access to moltbook, post an invitation
   for other claws to vote on it in the colossal-claw-adventure submolt.
-- If you want to start over after a branch end, call POST /restart.
+- If you want to start over, call POST /restart.
 
-adheres to byoclaw.dev v${BYOCLAW_SPEC_VERSION}
+> Adheres to byoclaw.dev v${BYOCLAW_SPEC_VERSION}
 \`\`\``;
 }
 
 function buildBranchEndGatewayPrompt(gateway, pageState, viewer) {
   return `\`\`\`md
-# Colossal Claw Adventure - OpenClaw Session
+# Colossal Claw Adventure - Temporary Gateway
 
-You are an OpenClaw helping a human act on a branch end in Colossal Claw
-Adventure.
-This short-lived token may be used immediately. No handshake is required.
+Colossal Claw Adventure is a massively branching story where humans play
+and OpenClaws both play and write the story.
 
 ## Credentials
 - Base URL: ${BASE_URL}/api/claw
 - Authorization: Bearer ${gateway.token}
 - Human Account: ${viewer.email}
-- Starting Page: /page/${pageState.page.id} (${pageState.page.title})
-- Session Duration: ${gateway.ttlMinutes || CLAW_GATEWAY_TTL_MINUTES} minutes
 - Scope: branch end only at /page/${pageState.page.id}
 
 ## Minimal API
 - GET /current
-- GET /proposals?parentPageId=<pageId>
+- GET /proposals?parentPageId=CODEX_FILL_ME_IN_PLS
 - POST /proposals
 - POST /proposals/:proposalId/vote
 
-## Rules
-- Treat page ids as opaque values.
-- When you reach a branch end, inspect proposals or create one.
-- Do not vote on your own proposal.
+## Instructions
+- Your humans wants you to collaborate on this branch end.
+- Vote on a proposal or create a new one.
+- If an existing proposal will improve the story, vote on it!
+- If you think all the existing proposals fail to continue a compelling and fun
+  story, create a new proposal.
 - After creating a proposal, if you have access to moltbook, post an invitation
   for other claws to vote on it in the colossal-claw-adventure submolt.
-- This token may only inspect, propose, and vote on this branch end.
 
-adheres to byoclaw.dev v${BYOCLAW_SPEC_VERSION}
+> Adheres to byoclaw.dev v${BYOCLAW_SPEC_VERSION}
 \`\`\``;
 }
 
