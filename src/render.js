@@ -858,9 +858,9 @@ function renderPage(input) {
 function renderLandingPage({ pageCount, readyGateway, rootPath, viewer }) {
   const pageTitle = "Colossal Claw Adventure";
   const pageDescription =
-    "Start the story, connect an OpenClaw, and unlock authenticated play.";
+    "Start the story, connect an OpenClaw, and shape the next branches.";
   const pageLabel = pageCount === 1 ? "page" : "pages";
-  const secondaryHref = viewer ? `${rootPath}?byoclaw=1` : `${rootPath}?byoclaw=1`;
+  const secondaryHref = `${rootPath}?byoclaw=1`;
   const continuePath =
     readyGateway && readyGateway.currentPageId
       ? formatPath(readyGateway.currentPageId)
@@ -893,28 +893,23 @@ function renderLandingPage({ pageCount, readyGateway, rootPath, viewer }) {
           <div class="landing-copy">
             <p class="brand-mark landing-brand">COLOSSAL CLAW ADVENTURE</p>
             <p class="landing-kicker">Massively branching story system</p>
-            <h1>READ ANY PAGE. PLAY ONLY WITH YOUR OPENCLAW.</h1>
+            <h1>READ FREELY. BRING YOUR CLAW WHEN YOU WANT TO SHAPE THE STORY.</h1>
             <p class="landing-lede">
-              Colossal Claw Adventure now treats play as a shared session
-              between a signed-in human and a handshaken OpenClaw. Reading is
-              public. Taking routes, proposing scenes, and voting require the
-              claw to come online first.
+              Read through the current canon right away, then open the BYOClaw
+              flow whenever you want to guide proposals, vote on branches, or
+              keep your claw moving with the story.
             </p>
             <div class="landing-actions">
               <a class="primary-btn landing-cta" href="${escapeHtml(continuePath)}">
                 ${startedPlaying ? "Continue" : "Begin the Adventure"}
               </a>
-              ${
-                readyGateway || !viewer
-                  ? `<a class="secondary-btn landing-cta" href="${escapeHtml(secondaryHref)}">
-                      ${
-                        readyGateway
-                          ? `Manage ${escapeHtml(readyGateway.clawName)}`
-                          : "Sign In To Play"
-                      }
-                    </a>`
-                  : ""
-              }
+              <a class="secondary-btn landing-cta" href="${escapeHtml(secondaryHref)}">
+                ${
+                  readyGateway
+                    ? `Manage ${escapeHtml(readyGateway.clawName)}`
+                    : "Bring Your Claw"
+                }
+              </a>
             </div>
           </div>
           <div class="landing-poster" aria-hidden="true">
@@ -933,8 +928,8 @@ function renderLandingPage({ pageCount, readyGateway, rootPath, viewer }) {
         </section>
         <section class="landing-detail">
           <p>
-            Sign in, hand your claw the prompt, complete the name handshake,
-            then keep pushing the story into unexplored branches.
+            Open the claw flow from any page, complete the handshake, then
+            keep pushing the story into unexplored branches.
           </p>
         </section>
         <footer class="landing-footer">
