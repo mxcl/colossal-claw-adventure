@@ -20,7 +20,6 @@ const {
   findGatewayByTokenHash,
   findOptionTargetForPage,
   findPageIdByPublicId,
-  getLatestActiveGatewayForUser,
   getGatewayActivity,
   getLatestReadyGatewayForUser,
   getPageState,
@@ -259,6 +258,10 @@ function isBranchEndOnlyGateway(gateway) {
   return gateway && gateway.scopeType === "branch_end_only";
 }
 
+function getLatestFullGateway(gateways) {
+  return gateways.find((gateway) => !isBranchEndOnlyGateway(gateway)) || null;
+}
+
 function buildPostAuthRedirect(userId, returnTo) {
   const readyGateway = getLatestReadyGatewayForUser(userId);
 
@@ -266,8 +269,8 @@ function buildPostAuthRedirect(userId, returnTo) {
     return returnTo;
   }
 
-  const activeGateway = getLatestActiveGatewayForUser(userId);
-  return activeGateway ? `${returnTo}?byoclaw=1` : `${returnTo}?byoclaw=1&issue=1`;
+  const activeFullGateway = getLatestFullGateway(listActiveGatewaysForUser(userId));
+  return activeFullGateway ? `${returnTo}?byoclaw=1` : `${returnTo}?byoclaw=1&issue=1`;
 }
 
 function serializeClawState(gateway) {
@@ -291,19 +294,36 @@ function serializeClawState(gateway) {
 
 function renderStoryResponse(req, res, pageId, input = {}) {
   const viewer = req.viewer;
-  let readyGateway = viewer ? getLatestReadyGatewayForUser(viewer.id) : null;
-  const pageState = getPageState(pageId, readyGateway ? readyGateway.gatewayId : null, false);
-  const modalOpen = input.modalOpen || req.query.byoclaw === "1";
   const gateways = viewer ? listActiveGatewaysForUser(viewer.id) : [];
-  const latestGateway = viewer ? getLatestActiveGatewayForUser(viewer.id) : null;
+  let readyGateway = viewer ? getLatestReadyGatewayForUser(viewer.id) : null;
+  const latestFullGateway = getLatestFullGateway(gateways);
+  const viewerGatewayIdsForPage = [
+    ...new Set(
+      [
+        ...gateways
+          .filter(
+            (gateway) =>
+              isBranchEndOnlyGateway(gateway) && gateway.pageId === pageId
+          )
+          .map((gateway) => gateway.gatewayId),
+        readyGateway ? readyGateway.gatewayId : null
+      ].filter(Boolean)
+    )
+  ];
+  const pageState = getPageState(
+    pageId,
+    viewerGatewayIdsForPage,
+    false
+  );
+  const modalOpen = input.modalOpen || req.query.byoclaw === "1";
   const shouldIssueGateway =
     viewer &&
     modalOpen &&
     !input.gateway &&
-    (input.issueGateway || (req.query.issue === "1" && !latestGateway));
+    (input.issueGateway || (req.query.issue === "1" && !latestFullGateway));
   let gateway = shouldIssueGateway
     ? buildGatewayDetails(pageState.page.id, viewer.id, input.gatewayOptions || {})
-    : input.gateway || latestGateway;
+    : input.gateway || (modalOpen ? latestFullGateway : null);
   if (gateway) {
     const gatewayDetails = gateways.find(
       (activeGateway) => activeGateway.gatewayId === gateway.gatewayId

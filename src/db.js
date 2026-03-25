@@ -954,7 +954,26 @@ function getProposals(parentPageId, voterClawId = null) {
   }));
 }
 
-function getProposalSummary(parentPageId, viewerClawId = null) {
+function getProposalSummary(parentPageId, viewerClawIds = null) {
+  const viewerIds = Array.isArray(viewerClawIds)
+    ? viewerClawIds.filter(Boolean)
+    : viewerClawIds
+      ? [viewerClawIds]
+      : [];
+  const placeholders = viewerIds.map(() => "?").join(", ");
+  const viewerProposalCase = viewerIds.length
+    ? `COUNT(DISTINCT CASE
+          WHEN proposals.author_claw_id IN (${placeholders}) THEN proposals.id
+        END) AS viewerProposalCount`
+    : "0 AS viewerProposalCount";
+  const viewerVoteCase = viewerIds.length
+    ? `COUNT(DISTINCT CASE
+          WHEN proposal_votes.claw_id IN (${placeholders}) THEN proposal_votes.id
+        END) AS viewerVoteCount`
+    : "0 AS viewerVoteCount";
+  const params = viewerIds.length
+    ? [parentPageId, ...viewerIds, ...viewerIds]
+    : [parentPageId];
   const summary = db
     .prepare(
       `
@@ -963,12 +982,8 @@ function getProposalSummary(parentPageId, viewerClawId = null) {
         COUNT(DISTINCT proposals.id) AS proposalCount,
         COUNT(proposal_votes.id) AS totalVotes,
         COALESCE(MAX(proposal_vote_totals.voteCount), 0) AS leadingProposalVotes,
-        COUNT(DISTINCT CASE
-          WHEN proposals.author_claw_id = @viewerClawId THEN proposals.id
-        END) AS viewerProposalCount,
-        COUNT(DISTINCT CASE
-          WHEN proposal_votes.claw_id = @viewerClawId THEN proposal_votes.id
-        END) AS viewerVoteCount
+        ${viewerProposalCase},
+        ${viewerVoteCase}
       FROM proposals
       LEFT JOIN proposal_votes
         ON proposal_votes.proposal_id = proposals.id
@@ -978,10 +993,10 @@ function getProposalSummary(parentPageId, viewerClawId = null) {
         GROUP BY proposal_id
       ) AS proposal_vote_totals
         ON proposal_vote_totals.proposal_id = proposals.id
-      WHERE proposals.parent_page_id = @parentPageId
+      WHERE proposals.parent_page_id = ?
       `
     )
-    .get({ parentPageId, viewerClawId });
+    .get(...params);
 
   return {
     clawCount: summary?.clawCount || 0,
@@ -1061,6 +1076,12 @@ function getPageState(pageId, voterClawId = null, includeProposalDetails = false
       )
     : 100;
 
+  const viewerClawIds = Array.isArray(voterClawId)
+    ? voterClawId.filter(Boolean)
+    : voterClawId
+      ? [voterClawId]
+      : [];
+
   return {
     breadcrumb: getBreadcrumb(loaded.page.dbId),
     currentPageId: loaded.page.publicId,
@@ -1100,9 +1121,9 @@ function getPageState(pageId, voterClawId = null, includeProposalDetails = false
       totalHumanPlayerCount,
       title: loaded.page.title
     },
-    proposalSummary: getProposalSummary(loaded.page.dbId, voterClawId),
+    proposalSummary: getProposalSummary(loaded.page.dbId, viewerClawIds),
     proposals: includeProposalDetails
-      ? getProposals(loaded.page.dbId, voterClawId)
+      ? getProposals(loaded.page.dbId, viewerClawIds[0] || null)
       : [],
     rootPageId: rootPagePublicId
   };
@@ -1472,6 +1493,7 @@ function getLatestReadyGatewayForUser(userId) {
         WHERE claw_gateways.user_id = ?
           AND claw_gateways.revoked_at IS NULL
           AND claw_gateways.expires_at > ?
+          AND claw_gateways.scope_type != 'branch_end_only'
           AND claw_gateways.handshake_at IS NOT NULL
           AND claw_gateways.claw_name IS NOT NULL
           AND claw_gateways.claw_name != ''
