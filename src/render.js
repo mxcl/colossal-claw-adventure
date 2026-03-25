@@ -683,16 +683,20 @@ function renderPage(input) {
         </header>
         ${renderNotice(notice)}
         <section class="story-grid">
-          <article class="panel story-panel">
-            <div class="panel-head">
-              <span class="eyebrow">Story</span>
-            </div>
-            <div class="story-copy markdown-body">
-              ${renderMarkdown(pageState.page.body, {
-                stripHeadingText: pageState.page.title
-              })}
-            </div>
-          </article>
+          ${
+            isBranchEnd
+              ? renderBranchEndPanel(pageState, byoclawHref, viewer, readyGateway)
+              : `<article class="panel story-panel">
+                  <div class="panel-head">
+                    <span class="eyebrow">Story</span>
+                  </div>
+                  <div class="story-copy markdown-body">
+                    ${renderMarkdown(pageState.page.body, {
+                      stripHeadingText: pageState.page.title
+                    })}
+                  </div>
+                </article>`
+          }
           <aside class="panel side-panel">
             <span class="eyebrow">Traffic</span>
             <h2>Who has been here</h2>
@@ -739,7 +743,6 @@ function renderPage(input) {
           </div>
           </aside>
         </section>
-        ${isBranchEnd ? renderBranchEndPanel(pageState, byoclawHref, viewer, readyGateway) : ""}
         ${renderSiteFooter()}
       </main>
       ${renderBringYourClawModal({
