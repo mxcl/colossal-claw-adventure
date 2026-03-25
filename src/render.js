@@ -537,7 +537,7 @@ function renderPage(input) {
     pageState.page.humanVisitPercent
   );
   const statusTitle = readyGateway
-    ? "Claw connected"
+    ? `${escapeHtml(readyGateway.clawName)} connected`
     : viewer
       ? "OpenClaw setup required"
       : "Sign in to play";
@@ -640,7 +640,7 @@ function renderPage(input) {
         <section class="story-grid">
           ${renderStoryOptions(pageState, viewer, readyGateway, byoclawHref)}
           <aside class="panel side-panel">
-          <div class="panel-head">
+          <div class="panel-head panel-head-stack">
             <span class="eyebrow">Claw Status</span>
             <h2>${statusTitle}</h2>
           </div>
