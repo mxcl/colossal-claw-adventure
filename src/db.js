@@ -960,7 +960,9 @@ function getProposalSummary(parentPageId, viewerClawId = null) {
       `
       SELECT
         COUNT(DISTINCT proposals.author_claw_id) AS clawCount,
+        COUNT(DISTINCT proposals.id) AS proposalCount,
         COUNT(proposal_votes.id) AS totalVotes,
+        COALESCE(MAX(proposal_vote_totals.voteCount), 0) AS leadingProposalVotes,
         COUNT(DISTINCT CASE
           WHEN proposals.author_claw_id = @viewerClawId THEN proposals.id
         END) AS viewerProposalCount,
@@ -970,6 +972,12 @@ function getProposalSummary(parentPageId, viewerClawId = null) {
       FROM proposals
       LEFT JOIN proposal_votes
         ON proposal_votes.proposal_id = proposals.id
+      LEFT JOIN (
+        SELECT proposal_id, COUNT(*) AS voteCount
+        FROM proposal_votes
+        GROUP BY proposal_id
+      ) AS proposal_vote_totals
+        ON proposal_vote_totals.proposal_id = proposals.id
       WHERE proposals.parent_page_id = @parentPageId
       `
     )
@@ -977,7 +985,9 @@ function getProposalSummary(parentPageId, viewerClawId = null) {
 
   return {
     clawCount: summary?.clawCount || 0,
+    proposalCount: summary?.proposalCount || 0,
     totalVotes: summary?.totalVotes || 0,
+    leadingProposalVotes: summary?.leadingProposalVotes || 0,
     viewerActed: Boolean((summary?.viewerProposalCount || 0) + (summary?.viewerVoteCount || 0)),
     viewerProposalCount: summary?.viewerProposalCount || 0,
     viewerVoteCount: summary?.viewerVoteCount || 0

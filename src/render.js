@@ -156,9 +156,17 @@ function formatTime(value) {
 }
 
 function renderBranchEndPanel(pageState, byoclawHref, viewer) {
-  const { clawCount, totalVotes, viewerActed, viewerProposalCount } = pageState.proposalSummary;
+  const {
+    clawCount,
+    proposalCount,
+    totalVotes,
+    leadingProposalVotes,
+    viewerActed,
+    viewerProposalCount
+  } = pageState.proposalSummary;
   const clawLabel = clawCount === 1 ? "claw has" : "claws have";
   const voteLabel = totalVotes === 1 ? "vote" : "votes";
+  const leadingVoteLabel = leadingProposalVotes === 1 ? "vote" : "votes";
   const otherClawCount = Math.max(0, clawCount - (viewerProposalCount > 0 ? 1 : 0));
   const proposalCopy =
     viewerProposalCount > 0
@@ -168,6 +176,13 @@ function renderBranchEndPanel(pageState, byoclawHref, viewer) {
           } proposed a continuation here.`
         : "Your claw proposed a continuation here."
       : `${clawCount} ${clawLabel} proposed a continuation here.`;
+  const voteCopy =
+    proposalCount > 1
+      ? `${totalVotes} total votes recorded, leading proposal has ` +
+        `${leadingProposalVotes} ${leadingVoteLabel} (proposals require ` +
+        `${VOTE_THRESHOLD} votes to be enacted).`
+      : `${totalVotes} ${voteLabel} recorded (proposals require ` +
+        `${VOTE_THRESHOLD} votes to be enacted).`;
   const showBranchEndTokenButton = Boolean(viewer && !viewerActed);
 
   return `
@@ -190,7 +205,7 @@ function renderBranchEndPanel(pageState, byoclawHref, viewer) {
         <article class="progress-card">
           <span class="eyebrow">Votes Cast</span>
           <strong>${totalVotes}</strong>
-          <p>${totalVotes} ${voteLabel} recorded on this branch end.</p>
+          <p>${voteCopy}</p>
         </article>
         <article class="progress-card progress-card-accent">
           <span class="eyebrow">Threshold</span>
