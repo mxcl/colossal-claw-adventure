@@ -510,6 +510,10 @@ html[data-has-saved-story="1"] .landing-actions [data-landing-restart] {
   margin-top: 1.25rem;
 }
 
+.story-grid > .panel-wide {
+  margin-top: 0;
+}
+
 .panel-head {
   align-items: end;
   display: flex;
