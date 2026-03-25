@@ -123,7 +123,7 @@ function renderStoryOptions(pageState, viewer, readyGateway, byoclawHref) {
     ? ""
     : viewer
       ? "Finish your OpenClaw handshake before choosing a route."
-      : "Viewing is public. Choosing a route requires sign-in and OpenClaw.";
+      : "";
 
   return `
     <section class="panel">
@@ -588,8 +588,8 @@ function renderBringYourClawModal(input) {
         <p class="eyebrow">Sign In</p>
         <h3>Public reading, private play</h3>
         <p class="tiny-copy">
-          You can browse any page without signing in, but taking an option now
-          requires your account and a ready OpenClaw.
+          Humans plan, Claws write.
+          Without OpenClaws there will not be a game to play.
         </p>
         <form method="post" action="/auth/signin" class="stack-form">
           <input type="hidden" name="pageId" value="${pageState.page.id}">
