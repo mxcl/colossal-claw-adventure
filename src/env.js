@@ -48,7 +48,7 @@ const SQLITE_DB_PATH =
 const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
 const VOTE_THRESHOLD = 3;
 const BYOCLAW_SPEC_VERSION = "0.1.0";
-const CLAW_GATEWAY_TTL_MINUTES = 10;
+const CLAW_GATEWAY_TTL_MINUTES = 120;
 const MAX_ACTIVE_CLAW_GATEWAYS_PER_USER = 5;
 
 module.exports = {

@@ -5,21 +5,23 @@ const {
   clearSessionCookie,
   hashPassword,
   hashToken,
-  HUMAN_PLAYER_COOKIE_NAME,
   parseCookies,
   randomBase64UrlToken,
-  setHumanPlayerCookie,
   setSessionCookie,
   verifyPassword
 } = require("./auth");
 const {
   castVote,
+  completeGatewayHandshake,
   createProposal,
   createSession,
   createUser,
   deleteSession,
-  findPageIdByPublicId,
   findGatewayByTokenHash,
+  findOptionTargetForPage,
+  findPageIdByPublicId,
+  getLatestActiveGatewayForUser,
+  getLatestReadyGatewayForUser,
   getPageState,
   getRootPagePublicId,
   getStoryPageCount,
@@ -27,11 +29,11 @@ const {
   getUserBySessionToken,
   issueClawGateway,
   listActiveGatewaysForUser,
-  recordHumanPageVisit,
-  revokeGateway
+  restartGatewayCurrentPage,
+  revokeGateway,
+  updateGatewayCurrentPage
 } = require("./db");
 const {
-  BASE_URL,
   BYOCLAW_SPEC_VERSION
 } = require("./env");
 const {
@@ -49,6 +51,7 @@ const MAX_ENTRY_OPTION_LABEL_LENGTH = 80;
 const MAX_PAGE_TITLE_LENGTH = 120;
 const MAX_PAGE_BODY_LENGTH = 8000;
 const MAX_MODEL_NAME_LENGTH = 160;
+const MAX_CLAW_NAME_LENGTH = 120;
 const MAX_PROPOSAL_OPTIONS = 5;
 
 function parsePageId(value) {
@@ -56,12 +59,21 @@ function parsePageId(value) {
   return PUBLIC_PAGE_ID_PATTERN.test(pageId) ? pageId : null;
 }
 
+function parseOptionId(value) {
+  const optionId = Number(value);
+  return Number.isInteger(optionId) && optionId > 0 ? optionId : null;
+}
+
 function emailLooksValid(email) {
   return typeof email === "string" && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
 function textLooksValid(value, maxLength) {
-  return typeof value === "string" && value.trim().length >= 1 && value.trim().length <= maxLength;
+  return (
+    typeof value === "string" &&
+    value.trim().length >= 1 &&
+    value.trim().length <= maxLength
+  );
 }
 
 function proposalInputLooksValid(payload) {
@@ -89,7 +101,11 @@ function proposalInputLooksValid(payload) {
     return false;
   }
 
-  if (!Array.isArray(payload.options) || payload.options.length < 2 || payload.options.length > MAX_PROPOSAL_OPTIONS) {
+  if (
+    !Array.isArray(payload.options) ||
+    payload.options.length < 2 ||
+    payload.options.length > MAX_PROPOSAL_OPTIONS
+  ) {
     return false;
   }
 
@@ -142,47 +158,72 @@ function buildGatewayDetails(pageId, userId) {
   };
 }
 
-function ensureHumanPlayerId(req, res) {
-  const existing = req.cookies[HUMAN_PLAYER_COOKIE_NAME];
-
-  if (existing) {
-    return existing;
-  }
-
-  const humanPlayerId = randomBase64UrlToken(18, "cca_human_");
-  setHumanPlayerCookie(res, humanPlayerId);
-  req.cookies[HUMAN_PLAYER_COOKIE_NAME] = humanPlayerId;
-  return humanPlayerId;
-}
-
 function toPublicPage(page) {
   const { dbId, parentPageDbId, ...publicPage } = page;
   return publicPage;
 }
 
-function toPublicOptions(options) {
-  return options.map(({ targetPageDbId, ...option }) => option);
+function toClawOptions(options) {
+  return options.map(({ id, label, targetIsStub, targetTitle }) => ({
+    id,
+    label,
+    targetIsStub,
+    targetTitle
+  }));
+}
+
+function getGatewayCurrentPageId(gateway) {
+  return gateway.currentPageId || gateway.pageId;
+}
+
+function isGatewayReady(gateway) {
+  return Boolean(gateway && gateway.handshakeAt && gateway.clawName);
+}
+
+function buildPostAuthRedirect(userId, returnTo) {
+  const readyGateway = getLatestReadyGatewayForUser(userId);
+
+  if (readyGateway) {
+    return returnTo;
+  }
+
+  const activeGateway = getLatestActiveGatewayForUser(userId);
+  return activeGateway ? `${returnTo}?byoclaw=1` : `${returnTo}?byoclaw=1&issue=1`;
+}
+
+function serializeClawState(gateway) {
+  const currentPageId = getGatewayCurrentPageId(gateway);
+  const pageState = getPageState(currentPageId, gateway.gatewayId, false);
+
+  return {
+    branchEnd: pageState.options.length === 0,
+    claw: {
+      expiresAt: gateway.expiresAt,
+      gatewayId: gateway.gatewayId,
+      handshakeAt: gateway.handshakeAt,
+      name: gateway.clawName
+    },
+    currentPageId: pageState.page.id,
+    options: toClawOptions(pageState.options),
+    page: toPublicPage(pageState.page),
+    rootPageId: pageState.rootPageId
+  };
 }
 
 function renderStoryResponse(req, res, pageId, input = {}) {
   const viewer = req.viewer;
-  let pageState = getPageState(pageId, null, false);
-  const humanPlayerId = ensureHumanPlayerId(req, res);
-  recordHumanPageVisit({
-    humanPlayerId,
-    pageId: pageState.page.dbId
-  });
-  pageState = getPageState(pageState.page.id, null, false);
+  const pageState = getPageState(pageId, null, false);
   const modalOpen = input.modalOpen || req.query.byoclaw === "1";
+  const latestGateway = viewer ? getLatestActiveGatewayForUser(viewer.id) : null;
   const shouldIssueGateway =
     viewer &&
     modalOpen &&
-    (input.issueGateway || req.query.issue === "1") &&
-    !input.gateway;
-  const gateway =
-    shouldIssueGateway
-      ? buildGatewayDetails(pageState.page.id, viewer.id)
-      : input.gateway || null;
+    !input.gateway &&
+    (input.issueGateway || (req.query.issue === "1" && !latestGateway));
+  const gateway = shouldIssueGateway
+    ? buildGatewayDetails(pageState.page.id, viewer.id)
+    : input.gateway || latestGateway;
+  const readyGateway = viewer ? getLatestReadyGatewayForUser(viewer.id) : null;
   const gateways = viewer ? listActiveGatewaysForUser(viewer.id) : [];
   const html = renderPage({
     modal: {
@@ -195,6 +236,7 @@ function renderStoryResponse(req, res, pageId, input = {}) {
     },
     notice: input.notice || "",
     pageState,
+    readyGateway,
     viewer
   });
 
@@ -205,7 +247,7 @@ function requireViewer(req, res, next) {
   if (!req.viewer) {
     const pageId = parsePageId(req.body.pageId) || getRootPagePublicId();
     renderStoryResponse(req, res, pageId, {
-      authError: "Sign in first to bring a claw.",
+      authError: "Sign in first to issue an OpenClaw prompt.",
       modalOpen: true,
       statusCode: 401
     });
@@ -215,7 +257,8 @@ function requireViewer(req, res, next) {
   next();
 }
 
-function authenticateClaw(req) {
+function authenticateClaw(req, options = {}) {
+  const { requireHandshake = true } = options;
   const authorization = req.headers.authorization || "";
   const token = authorization.startsWith("Bearer ")
     ? authorization.slice("Bearer ".length).trim()
@@ -229,7 +272,8 @@ function authenticateClaw(req) {
     };
   }
 
-  const gateway = findGatewayByTokenHash(hashToken(token));
+  const tokenHash = hashToken(token);
+  const gateway = findGatewayByTokenHash(tokenHash);
 
   if (!gateway) {
     return {
@@ -280,7 +324,18 @@ function authenticateClaw(req) {
     };
   }
 
-  return { gateway, ok: true };
+  if (requireHandshake && !isGatewayReady(gateway)) {
+    return {
+      ok: false,
+      response: {
+        error: "CLAW_HANDSHAKE_REQUIRED",
+        message: "Call POST /api/claw/handshake with your claw name first."
+      },
+      status: 409
+    };
+  }
+
+  return { gateway, ok: true, tokenHash };
 }
 
 function createApp() {
@@ -296,7 +351,9 @@ function createApp() {
     req.cookies = cookies;
     req.viewer = null;
 
-    const sessionToken = cookies.cca_session || cookies[process.env.SESSION_COOKIE_NAME || "cca_session"];
+    const sessionToken =
+      cookies.cca_session ||
+      cookies[process.env.SESSION_COOKIE_NAME || "cca_session"];
     if (sessionToken) {
       const viewer = getUserBySessionToken(hashToken(sessionToken));
       if (viewer) {
@@ -316,6 +373,7 @@ function createApp() {
     res.send(
       renderLandingPage({
         pageCount: getStoryPageCount(),
+        readyGateway: req.viewer ? getLatestReadyGatewayForUser(req.viewer.id) : null,
         rootPath,
         viewer: req.viewer
       })
@@ -327,9 +385,54 @@ function createApp() {
     renderStoryResponse(req, res, pageId);
   });
 
+  app.get("/page/:pageId/:optionId", (req, res) => {
+    const pageId = parsePageId(req.params.pageId) || getRootPagePublicId();
+    const optionId = parseOptionId(req.params.optionId);
+
+    if (!optionId) {
+      renderStoryResponse(req, res, pageId, {
+        notice: "That option route is invalid.",
+        statusCode: 404
+      });
+      return;
+    }
+
+    const option = findOptionTargetForPage({ optionId, pageId });
+
+    if (!option) {
+      renderStoryResponse(req, res, pageId, {
+        notice: "That option is no longer available.",
+        statusCode: 404
+      });
+      return;
+    }
+
+    if (!req.viewer) {
+      renderStoryResponse(req, res, pageId, {
+        authError: "Sign in to play. Viewing is public, but choosing a route is not.",
+        modalOpen: true,
+        statusCode: 401
+      });
+      return;
+    }
+
+    const readyGateway = getLatestReadyGatewayForUser(req.viewer.id);
+
+    if (!readyGateway) {
+      renderStoryResponse(req, res, pageId, {
+        clawError: "Your OpenClaw must finish its handshake before you can play.",
+        modalOpen: true,
+        statusCode: 403
+      });
+      return;
+    }
+
+    res.redirect(formatPath(option.targetPageId));
+  });
+
   app.post("/auth/signup", (req, res) => {
     const pageId = parsePageId(req.body.pageId) || getRootPagePublicId();
-    const email = (req.body.email || "").trim().toLowerCase();
+    const email = normalizeText(req.body.email).toLowerCase();
     const password = req.body.password || "";
     const returnTo = req.body.returnTo || formatPath(pageId);
 
@@ -370,12 +473,12 @@ function createApp() {
 
     createSession(session);
     setSessionCookie(res, session.token);
-    res.redirect(`${returnTo}?byoclaw=1&issue=1`);
+    res.redirect(buildPostAuthRedirect(userId, returnTo));
   });
 
   app.post("/auth/signin", (req, res) => {
     const pageId = parsePageId(req.body.pageId) || getRootPagePublicId();
-    const email = (req.body.email || "").trim().toLowerCase();
+    const email = normalizeText(req.body.email).toLowerCase();
     const password = req.body.password || "";
     const returnTo = req.body.returnTo || formatPath(pageId);
     const user = getUserByEmail(email);
@@ -392,12 +495,14 @@ function createApp() {
     const session = buildSessionRecord(user.id);
     createSession(session);
     setSessionCookie(res, session.token);
-    res.redirect(`${returnTo}?byoclaw=1&issue=1`);
+    res.redirect(buildPostAuthRedirect(user.id, returnTo));
   });
 
   app.post("/auth/signout", (req, res) => {
     const cookies = parseCookies(req.headers.cookie);
-    const token = cookies.cca_session || cookies[process.env.SESSION_COOKIE_NAME || "cca_session"];
+    const token =
+      cookies.cca_session ||
+      cookies[process.env.SESSION_COOKIE_NAME || "cca_session"];
 
     if (token) {
       deleteSession(hashToken(token));
@@ -412,7 +517,7 @@ function createApp() {
 
     renderStoryResponse(req, res, pageId, {
       issueGateway: true,
-      modalNotice: "Issued a temporary BYOClaw gateway for this page.",
+      modalNotice: "Issued a 2-hour OpenClaw session prompt for this page.",
       modalOpen: true
     });
   });
@@ -423,7 +528,7 @@ function createApp() {
 
     if (!revokeGateway({ gatewayId, userId: req.viewer.id })) {
       renderStoryResponse(req, res, pageId, {
-        clawError: "Unable to revoke that gateway.",
+        clawError: "Unable to revoke that OpenClaw session.",
         modalOpen: true,
         statusCode: 404
       });
@@ -431,7 +536,7 @@ function createApp() {
     }
 
     renderStoryResponse(req, res, pageId, {
-      modalNotice: `Revoked temporary gateway ${gatewayId}.`,
+      modalNotice: `Revoked OpenClaw session ${gatewayId}.`,
       modalOpen: true
     });
   });
@@ -446,14 +551,46 @@ function createApp() {
       basePath: "/api/claw",
       byoclawSpecVersion: BYOCLAW_SPEC_VERSION,
       endpoints: [
-        { method: "GET", name: "discovery", path: "/" },
+        { method: "POST", name: "handshake", path: "/handshake" },
         { method: "GET", name: "current", path: "/current" },
-        { method: "GET", name: "page", path: "/pages/:pageId" },
+        { method: "POST", name: "play", path: "/play" },
         { method: "GET", name: "proposals", path: "/proposals" },
         { method: "POST", name: "createProposal", path: "/proposals" },
-        { method: "POST", name: "voteProposal", path: "/proposals/:proposalId/vote" }
+        { method: "POST", name: "voteProposal", path: "/proposals/:proposalId/vote" },
+        { method: "POST", name: "restart", path: "/restart" }
       ]
     });
+  });
+
+  app.post("/api/claw/handshake", (req, res) => {
+    const auth = authenticateClaw(req, { requireHandshake: false });
+    if (!auth.ok) {
+      res.status(auth.status).json(auth.response);
+      return;
+    }
+
+    const name = normalizeText(req.body.name);
+    if (!textLooksValid(name, MAX_CLAW_NAME_LENGTH)) {
+      errorResponse(res, 400, "CLAW_NAME_INVALID", {
+        message: "Provide a non-empty claw name."
+      });
+      return;
+    }
+
+    const completed = completeGatewayHandshake({
+      gatewayId: auth.gateway.gatewayId,
+      name
+    });
+
+    if (!completed) {
+      errorResponse(res, 409, "CLAW_HANDSHAKE_REJECTED", {
+        message: "Unable to complete the handshake for this session."
+      });
+      return;
+    }
+
+    const gateway = findGatewayByTokenHash(auth.tokenHash);
+    res.json(serializeClawState(gateway));
   });
 
   app.get("/api/claw/current", (req, res) => {
@@ -463,53 +600,56 @@ function createApp() {
       return;
     }
 
-    const pageState = getPageState(auth.gateway.pageId, auth.gateway.gatewayId, false);
-    const publicPage = toPublicPage(pageState.page);
-    const publicOptions = toPublicOptions(pageState.options);
-
-    res.json({
-      currentPageId: publicPage.id,
-      gateway: {
-        expiresAt: auth.gateway.expiresAt,
-        gatewayId: auth.gateway.gatewayId
-      },
-      options: publicOptions,
-      page: publicPage,
-      rootPageId: pageState.rootPageId
-    });
+    res.json(serializeClawState(auth.gateway));
   });
 
-  app.get("/api/claw/pages/:pageId", (req, res) => {
+  app.post("/api/claw/play", (req, res) => {
     const auth = authenticateClaw(req);
     if (!auth.ok) {
       res.status(auth.status).json(auth.response);
       return;
     }
 
-    const pageId = parsePageId(req.params.pageId);
-    if (!pageId || !findPageIdByPublicId(pageId)) {
-      errorResponse(res, 400, "CLAW_GATEWAY_SCOPE_FORBIDDEN", {
-        message: "Invalid page id."
+    const optionId = parseOptionId(req.body.optionId);
+
+    if (!optionId) {
+      errorResponse(res, 400, "CLAW_PLAY_OPTION_INVALID", {
+        message: "Provide a valid option id."
       });
       return;
     }
 
-    const pageState = getPageState(pageId, auth.gateway.gatewayId, false);
-    const publicPage = toPublicPage(pageState.page);
-    const publicOptions = toPublicOptions(pageState.options);
-
-    res.json({
-      breadcrumb: pageState.breadcrumb,
-      instructions: {
-        branchEnd:
-          publicOptions.length === 0
-            ? `${BASE_URL}/api/claw/proposals?parentPageId=${publicPage.id}`
-            : "Follow options[].targetPageId into another page."
-      },
-      options: publicOptions,
-      page: publicPage,
-      rootPageId: pageState.rootPageId
+    const option = findOptionTargetForPage({
+      optionId,
+      pageId: getGatewayCurrentPageId(auth.gateway)
     });
+
+    if (!option) {
+      errorResponse(res, 400, "CLAW_PLAY_OPTION_INVALID", {
+        message: "That option does not belong to the claw's current page."
+      });
+      return;
+    }
+
+    updateGatewayCurrentPage({
+      gatewayId: auth.gateway.gatewayId,
+      pageId: option.targetPageId
+    });
+
+    const gateway = findGatewayByTokenHash(auth.tokenHash);
+    res.json(serializeClawState(gateway));
+  });
+
+  app.post("/api/claw/restart", (req, res) => {
+    const auth = authenticateClaw(req);
+    if (!auth.ok) {
+      res.status(auth.status).json(auth.response);
+      return;
+    }
+
+    restartGatewayCurrentPage(auth.gateway.gatewayId);
+    const gateway = findGatewayByTokenHash(auth.tokenHash);
+    res.json(serializeClawState(gateway));
   });
 
   app.get("/api/claw/proposals", (req, res) => {
@@ -519,24 +659,17 @@ function createApp() {
       return;
     }
 
-    const pageId = parsePageId(req.query.parentPageId);
-    if (!pageId || !findPageIdByPublicId(pageId)) {
-      errorResponse(res, 400, "CLAW_GATEWAY_SCOPE_FORBIDDEN", {
-        message: "parentPageId must be a valid page id."
-      });
-      return;
-    }
-
+    const requestedPageId = parsePageId(req.query.parentPageId);
+    const pageId = requestedPageId || getGatewayCurrentPageId(auth.gateway);
     const pageState = getPageState(pageId, auth.gateway.gatewayId, true);
-    const publicPage = toPublicPage(pageState.page);
 
     res.json({
-      branchEnd: pageState.options.length === 0,
-      instructions: {
+      actions: {
         create: "POST /api/claw/proposals",
+        restart: "POST /api/claw/restart",
         vote: "POST /api/claw/proposals/:id/vote"
       },
-      page: publicPage,
+      currentPageId: pageState.page.id,
       proposals: pageState.proposals
     });
   });
@@ -549,9 +682,8 @@ function createApp() {
     }
 
     if (!proposalInputLooksValid(req.body)) {
-      errorResponse(res, 400, "CLAW_GATEWAY_SCOPE_FORBIDDEN", {
-        message:
-          "Proposal payload must include a non-empty entryOptionLabel, pageTitle, markdown pageBody, model, and 2 to 5 options."
+      errorResponse(res, 400, "CLAW_PROPOSAL_INVALID", {
+        message: "Proposal payload is invalid."
       });
       return;
     }
@@ -564,17 +696,16 @@ function createApp() {
         options: req.body.options.map((option) => normalizeText(option)),
         pageBody: normalizeText(req.body.pageBody),
         pageTitle: normalizeText(req.body.pageTitle),
-        parentPageId: parsePageId(req.body.parentPageId)
+        parentPageId: req.body.parentPageId
       });
 
       res.status(201).json({
-        instructions: {
-          nextStep: `POST /api/claw/proposals/${proposalId}/vote`
-        },
+        created: true,
+        nextStep: `POST /api/claw/proposals/${proposalId}/vote`,
         proposalId
       });
     } catch (error) {
-      errorResponse(res, 400, "CLAW_GATEWAY_SCOPE_FORBIDDEN", {
+      errorResponse(res, 400, "CLAW_PROPOSAL_REJECTED", {
         message:
           error instanceof Error ? error.message : "Unable to create proposal."
       });
@@ -590,7 +721,7 @@ function createApp() {
 
     const proposalId = proposalIdLooksValid(req.params.proposalId);
     if (!proposalId) {
-      errorResponse(res, 400, "CLAW_GATEWAY_SCOPE_FORBIDDEN", {
+      errorResponse(res, 400, "CLAW_PROPOSAL_ID_INVALID", {
         message: "Invalid proposal id."
       });
       return;
@@ -608,33 +739,14 @@ function createApp() {
         votes: result.votes
       });
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Unable to record vote.";
+      const message = error instanceof Error ? error.message : "Unable to record vote.";
       const status =
         message === "Claws cannot vote for their own proposals." ? 403 : 400;
-      const code =
-        message === "Claws cannot vote for their own proposals."
-          ? "CLAW_GATEWAY_SELF_VOTE_FORBIDDEN"
-          : "CLAW_GATEWAY_SCOPE_FORBIDDEN";
-
-      errorResponse(res, status, code, {
-        message: error instanceof Error ? error.message : "Unable to record vote."
-      });
+      errorResponse(res, status, "CLAW_VOTE_REJECTED", { message });
     }
-  });
-
-  app.use((err, req, res, _next) => {
-    console.error(err);
-    const pageId = parsePageId(req.params.pageId) || getRootPagePublicId();
-    renderStoryResponse(req, res, pageId, {
-      notice: "The application hit an unexpected error.",
-      statusCode: 500
-    });
   });
 
   return app;
 }
 
-module.exports = {
-  createApp
-};
+module.exports = { createApp };
