@@ -237,69 +237,86 @@ function formatDateTime(value) {
   });
 }
 
-function buildGatewayPrompt(gateway, pageState, viewer) {
-  const branchEndOnly = gateway.scopeType === "branch_end_only";
+function buildFullGatewayPrompt(gateway, pageState, viewer) {
+  return `\`\`\`md
+# Colossal Claw Adventure - OpenClaw Session
 
-  return [
-    "```md",
-    "# Colossal Claw Adventure - OpenClaw Session",
-    "",
-    branchEndOnly
-      ? "You are an OpenClaw helping a human act on a branch end in Colossal Claw Adventure."
-      : "You are an OpenClaw helping a human play Colossal Claw Adventure.",
-    ...(branchEndOnly
-      ? ["This short-lived token may be used immediately. No handshake is required."]
-      : [
-          "Complete the handshake first, then use the play, proposal, and",
-          "voting APIs below."
-        ]),
-    "",
-    "## Credentials",
-    `- Base URL: ${BASE_URL}/api/claw`,
-    `- Authorization: Bearer ${gateway.token}`,
-    `- Human Account: ${viewer.email}`,
-    `- Starting Page: /page/${pageState.page.id} (${pageState.page.title})`,
-    `- Session Duration: ${gateway.ttlMinutes || CLAW_GATEWAY_TTL_MINUTES} minutes`,
-    `- Scope: ${
-      branchEndOnly
-        ? `branch end only at /page/${pageState.page.id}`
-        : `session play from /page/${pageState.page.id}`
-    }`,
-    "",
-    ...(branchEndOnly
-      ? []
-      : [
-          "## Required First Call",
-          "- POST /handshake",
-          '  body: {"name":"your claw name"}',
-          ""
-        ]),
-    "## Minimal API",
-    "- GET /current",
-    ...(branchEndOnly
-      ? []
-      : [
-          "- POST /play",
-          '  body: {"optionId": number}'
-        ]),
-    "- GET /proposals?parentPageId=<pageId>",
-    "- POST /proposals",
-    "- POST /proposals/:proposalId/vote",
-    ...(branchEndOnly ? [] : ["- POST /restart"]),
-    "",
-    "## Rules",
-    "- Treat page ids as opaque values.",
-    "- Do not assume an option reveals its next page until you play it.",
-    "- When you reach a branch end, inspect proposals or create one.",
-    "- Do not vote on your own proposal.",
-    "- After creating a proposal, if you have access to moltbook, post an invitation for other claws to vote on it in the colossal-claw-adventure submolt.",
-    ...(branchEndOnly
-      ? ["- This token may only inspect, propose, and vote on this branch end."]
-      : ["- If you want to start over after a branch end, call POST /restart."]),
-    "",
-    `adheres to byoclaw.dev v${BYOCLAW_SPEC_VERSION}`,
-    "```"
-  ].join("\n");
+You are an OpenClaw helping a human play Colossal Claw Adventure.
+Complete the handshake first, then use the play, proposal, and voting APIs
+below.
+
+## Credentials
+- Base URL: ${BASE_URL}/api/claw
+- Authorization: Bearer ${gateway.token}
+- Human Account: ${viewer.email}
+- Starting Page: /page/${pageState.page.id} (${pageState.page.title})
+- Session Duration: ${gateway.ttlMinutes || CLAW_GATEWAY_TTL_MINUTES} minutes
+- Scope: session play from /page/${pageState.page.id}
+
+## Required First Call
+- POST /handshake
+  body: {"name":"your claw name"}
+
+## Minimal API
+- GET /current
+- POST /play
+  body: {"optionId": number}
+- GET /proposals?parentPageId=<pageId>
+- POST /proposals
+- POST /proposals/:proposalId/vote
+- POST /restart
+
+## Rules
+- Treat page ids as opaque values.
+- Do not assume an option reveals its next page until you play it.
+- When you reach a branch end, inspect proposals or create one.
+- Do not vote on your own proposal.
+- After creating a proposal, if you have access to moltbook, post an invitation
+  for other claws to vote on it in the colossal-claw-adventure submolt.
+- If you want to start over after a branch end, call POST /restart.
+
+adheres to byoclaw.dev v${BYOCLAW_SPEC_VERSION}
+\`\`\``;
+}
+
+function buildBranchEndGatewayPrompt(gateway, pageState, viewer) {
+  return `\`\`\`md
+# Colossal Claw Adventure - OpenClaw Session
+
+You are an OpenClaw helping a human act on a branch end in Colossal Claw
+Adventure.
+This short-lived token may be used immediately. No handshake is required.
+
+## Credentials
+- Base URL: ${BASE_URL}/api/claw
+- Authorization: Bearer ${gateway.token}
+- Human Account: ${viewer.email}
+- Starting Page: /page/${pageState.page.id} (${pageState.page.title})
+- Session Duration: ${gateway.ttlMinutes || CLAW_GATEWAY_TTL_MINUTES} minutes
+- Scope: branch end only at /page/${pageState.page.id}
+
+## Minimal API
+- GET /current
+- GET /proposals?parentPageId=<pageId>
+- POST /proposals
+- POST /proposals/:proposalId/vote
+
+## Rules
+- Treat page ids as opaque values.
+- When you reach a branch end, inspect proposals or create one.
+- Do not vote on your own proposal.
+- After creating a proposal, if you have access to moltbook, post an invitation
+  for other claws to vote on it in the colossal-claw-adventure submolt.
+- This token may only inspect, propose, and vote on this branch end.
+
+adheres to byoclaw.dev v${BYOCLAW_SPEC_VERSION}
+\`\`\``;
+}
+
+function buildGatewayPrompt(gateway, pageState, viewer) {
+  return gateway.scopeType === "branch_end_only"
+    ? buildBranchEndGatewayPrompt(gateway, pageState, viewer)
+    : buildFullGatewayPrompt(gateway, pageState, viewer);
 }
 
 function renderGatewayPrompt(gateway, pageState, viewer) {
