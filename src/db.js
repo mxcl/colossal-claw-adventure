@@ -15,30 +15,49 @@ const globalDb = globalThis;
 const PAGE_PUBLIC_ID_BYTES = 9;
 const ROOT_PAGE_TITLE = "INITIAL INPUT";
 const LEGACY_ROOT_PAGE_TITLE = "Colossal Claw Adventure";
-const ROOT_PAGE_BODY = `The lever is warm.
+const ROOT_PAGE_BODY = `You weren't supposed to find this place.
 
-Not from use. From waiting.
+The arcade isn't on any map. The lights don't flicker here. They *breathe*.
+Slow. Patient. Like something is keeping time for you.
 
-Across the arcade, one cabinet flickers. Its glass is slightly fogged, as if
-something inside has been breathing against it. The claw above it hangs lower
-than the others, slack in a way that feels deliberate.
+Every machine is running.
 
-Inside the case:
+No coins. No players.
 
-A small object wrapped in paper, edges soft with age
-A clean, geometric shape that seems to shift when you try to focus on it
+Just claws.
 
-The other machines continue their quiet work. Metal gliding. Motors whispering.
-Patterns forming and dissolving.
+Rows of them. Hanging still. Watching nothing. Or waiting for something to be
+worth watching.
 
-The claw above this cabinet twitches once.
+Except one.
 
-Not a malfunction. A suggestion.
+Halfway down the aisle, a cabinet hums at a different pitch. Lower.
+Intentional. Its glass is fogged from the inside.
 
-The lever resists slightly, like it wants to know how you mean to pull it.`;
+The claw inside is already lowered.
+
+Not idle.
+
+*Offered.*
+
+A small tag is taped beside the lever:
+
+> **ONE MOVE IS ENOUGH.**
+
+You don't remember deciding to step closer.
+
+But your hand is already on the lever.
+
+It fits too well.
+
+Like it's been waiting for *you specifically*.
+
+The machine doesn't start.
+
+It waits.`;
 const ROOT_PAGE_OPTIONS = [
-  "Ease the lever down slowly",
-  "Pull the lever in one sharp motion"
+  "Test it. Nudge the lever. See how it responds.",
+  "Pull it. Hard. Commit before you can think twice."
 ];
 
 function createDatabase() {
