@@ -442,6 +442,13 @@ function renderBringYourClawModal(input) {
     <div
       class="modal-backdrop"
       data-bring-your-claw-modal
+      data-gateway-id="${gateway ? escapeHtml(gateway.gatewayId) : ""}"
+      data-gateway-ready="${gateway && gateway.handshakeAt && gateway.clawName ? "1" : "0"}"
+      data-gateway-status-path="${
+        gateway
+          ? `/byoclaw/status/${encodeURIComponent(gateway.gatewayId)}`
+          : ""
+      }"
       ${modalOpen ? "" : "hidden"}
     >
       <div class="modal-card" role="dialog" aria-modal="true">

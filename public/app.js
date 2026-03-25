@@ -3,6 +3,13 @@
   const closeButtons = document.querySelectorAll("[data-close-bring-your-claw]");
   const copyButton = document.querySelector("[data-copy-gateway-prompt]");
   const promptBlock = document.querySelector("[data-gateway-prompt] code");
+  const gatewayStatusPath = modal
+    ? modal.getAttribute("data-gateway-status-path") || ""
+    : "";
+  const gatewayReady = modal
+    ? modal.getAttribute("data-gateway-ready") === "1"
+    : false;
+  let handshakePollTimer = null;
 
   async function copyText(text) {
     if (navigator.clipboard && window.isSecureContext) {
@@ -36,6 +43,11 @@
   }
 
   function closeModal() {
+    if (handshakePollTimer) {
+      window.clearInterval(handshakePollTimer);
+      handshakePollTimer = null;
+    }
+
     if (modal) {
       modal.hidden = true;
     }
@@ -50,6 +62,56 @@
         url.hash;
       window.history.replaceState({}, "", next);
     }
+  }
+
+  function currentPageUrlWithoutModalParams() {
+    const url = new URL(window.location.href);
+    url.searchParams.delete("byoclaw");
+    url.searchParams.delete("issue");
+    return (
+      url.pathname +
+      (url.searchParams.toString() ? `?${url.searchParams.toString()}` : "") +
+      url.hash
+    );
+  }
+
+  async function pollHandshakeStatus() {
+    if (!modal || modal.hidden || !gatewayStatusPath || gatewayReady) {
+      return;
+    }
+
+    try {
+      const response = await fetch(gatewayStatusPath, {
+        credentials: "same-origin",
+        headers: {
+          Accept: "application/json"
+        }
+      });
+
+      if (!response.ok) {
+        return;
+      }
+
+      const status = await response.json();
+      if (!status.ready) {
+        return;
+      }
+
+      closeModal();
+      window.location.replace(currentPageUrlWithoutModalParams());
+    } catch (_error) {
+      // Ignore transient polling failures and keep waiting.
+    }
+  }
+
+  function startHandshakePolling() {
+    if (!modal || !gatewayStatusPath || gatewayReady || modal.hidden) {
+      return;
+    }
+
+    handshakePollTimer = window.setInterval(() => {
+      void pollHandshakeStatus();
+    }, 2000);
   }
 
   closeButtons.forEach((button) => {
@@ -69,6 +131,7 @@
 
   if (document.body.getAttribute("data-modal-open") === "1") {
     openModal();
+    startHandshakePolling();
   }
 
   if (copyButton && promptBlock) {

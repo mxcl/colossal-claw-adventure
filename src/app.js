@@ -114,6 +114,69 @@ function proposalInputLooksValid(payload) {
   );
 }
 
+function validateProposalInput(payload) {
+  const issues = [];
+
+  if (!payload || typeof payload !== "object") {
+    return {
+      help:
+        "Send a JSON object with parentPageId, entryOptionLabel, pageTitle, " +
+        "pageBody, model, and an options array with 2 to 5 labels.",
+      issues: ["Request body must be a JSON object."]
+    };
+  }
+
+  if (!parsePageId(payload.parentPageId)) {
+    issues.push("parentPageId must be a valid page id from GET /api/claw/current.");
+  }
+
+  if (!textLooksValid(payload.entryOptionLabel, MAX_ENTRY_OPTION_LABEL_LENGTH)) {
+    issues.push(
+      `entryOptionLabel must be 1 to ${MAX_ENTRY_OPTION_LABEL_LENGTH} characters.`
+    );
+  }
+
+  if (!textLooksValid(payload.pageTitle, MAX_PAGE_TITLE_LENGTH)) {
+    issues.push(`pageTitle must be 1 to ${MAX_PAGE_TITLE_LENGTH} characters.`);
+  }
+
+  if (!textLooksValid(payload.pageBody, MAX_PAGE_BODY_LENGTH)) {
+    issues.push(
+      `pageBody must be 1 to ${MAX_PAGE_BODY_LENGTH} characters of Markdown.`
+    );
+  }
+
+  if (!textLooksValid(payload.model, MAX_MODEL_NAME_LENGTH)) {
+    issues.push(`model must be 1 to ${MAX_MODEL_NAME_LENGTH} characters.`);
+  }
+
+  if (!Array.isArray(payload.options)) {
+    issues.push("options must be an array of 2 to 5 non-empty option labels.");
+  } else {
+    if (payload.options.length < 2 || payload.options.length > MAX_PROPOSAL_OPTIONS) {
+      issues.push(
+        `options must contain between 2 and ${MAX_PROPOSAL_OPTIONS} labels; ` +
+          `you sent ${payload.options.length}.`
+      );
+    }
+
+    payload.options.forEach((option, index) => {
+      if (!textLooksValid(option, MAX_ENTRY_OPTION_LABEL_LENGTH)) {
+        issues.push(
+          `options[${index}] must be 1 to ${MAX_ENTRY_OPTION_LABEL_LENGTH} characters.`
+        );
+      }
+    });
+  }
+
+  return {
+    help:
+      "Correct the listed fields and retry POST /api/claw/proposals with 2 to " +
+      "5 follow-up option labels.",
+    issues
+  };
+}
+
 function proposalIdLooksValid(value) {
   const proposalId = Number(value);
   return Number.isInteger(proposalId) && proposalId > 0 ? proposalId : null;
@@ -125,6 +188,14 @@ function normalizeText(value) {
 
 function errorResponse(res, status, error, extra = {}) {
   res.status(status).json({ error, ...extra });
+}
+
+function clawClientError(res, status, error, message, extra = {}) {
+  errorResponse(res, status, error, {
+    message,
+    recoverable: true,
+    ...extra
+  });
 }
 
 function checkRateLimit(key, limit) {
@@ -257,6 +328,20 @@ function requireViewer(req, res, next) {
   next();
 }
 
+function requireViewerJson(req, res, next) {
+  if (!req.viewer) {
+    clawClientError(
+      res,
+      401,
+      "AUTH_REQUIRED",
+      "Sign in first, then retry this request with the same browser session."
+    );
+    return;
+  }
+
+  next();
+}
+
 function authenticateClaw(req, options = {}) {
   const { requireHandshake = true } = options;
   const authorization = req.headers.authorization || "";
@@ -267,7 +352,13 @@ function authenticateClaw(req, options = {}) {
   if (!token) {
     return {
       ok: false,
-      response: { error: "CLAW_GATEWAY_TOKEN_MISSING" },
+      response: {
+        error: "CLAW_GATEWAY_TOKEN_MISSING",
+        message:
+          "Send the OpenClaw bearer token in the Authorization header as " +
+          "'Bearer <token>'.",
+        recoverable: true
+      },
       status: 401
     };
   }
@@ -278,7 +369,13 @@ function authenticateClaw(req, options = {}) {
   if (!gateway) {
     return {
       ok: false,
-      response: { error: "CLAW_GATEWAY_TOKEN_INVALID" },
+      response: {
+        error: "CLAW_GATEWAY_TOKEN_INVALID",
+        message:
+          "This bearer token is invalid. Ask the human to issue a fresh prompt " +
+          "and retry with the new token.",
+        recoverable: true
+      },
       status: 401
     };
   }
@@ -286,7 +383,13 @@ function authenticateClaw(req, options = {}) {
   if (gateway.revokedAt) {
     return {
       ok: false,
-      response: { error: "CLAW_GATEWAY_TOKEN_REVOKED" },
+      response: {
+        error: "CLAW_GATEWAY_TOKEN_REVOKED",
+        message:
+          "This OpenClaw session was revoked. Ask the human to issue a fresh " +
+          "prompt and retry with the new token.",
+        recoverable: true
+      },
       status: 401
     };
   }
@@ -296,7 +399,11 @@ function authenticateClaw(req, options = {}) {
       ok: false,
       response: {
         error: "CLAW_GATEWAY_TOKEN_EXPIRED",
-        expiredAt: gateway.expiresAt
+        expiredAt: gateway.expiresAt,
+        message:
+          "This OpenClaw session expired. Ask the human to issue a fresh prompt " +
+          "and retry with the new token.",
+        recoverable: true
       },
       status: 401
     };
@@ -307,7 +414,11 @@ function authenticateClaw(req, options = {}) {
       ok: false,
       response: {
         error: "CLAW_GATEWAY_RATE_LIMITED",
-        retryAfterSeconds: 60
+        retryAfterSeconds: 60,
+        message:
+          "You are sending requests too quickly. Wait retryAfterSeconds, then " +
+          "retry the same request.",
+        recoverable: true
       },
       status: 429
     };
@@ -318,7 +429,11 @@ function authenticateClaw(req, options = {}) {
       ok: false,
       response: {
         error: "CLAW_GATEWAY_RATE_LIMITED",
-        retryAfterSeconds: 60
+        retryAfterSeconds: 60,
+        message:
+          "This human account is rate limited. Wait retryAfterSeconds, then " +
+          "retry the same request.",
+        recoverable: true
       },
       status: 429
     };
@@ -329,7 +444,10 @@ function authenticateClaw(req, options = {}) {
       ok: false,
       response: {
         error: "CLAW_HANDSHAKE_REQUIRED",
-        message: "Call POST /api/claw/handshake with your claw name first."
+        message:
+          "Call POST /api/claw/handshake with body {\"name\":\"your claw name\"} " +
+          "before using play, proposal, vote, or restart.",
+        recoverable: true
       },
       status: 409
     };
@@ -541,6 +659,30 @@ function createApp() {
     });
   });
 
+  app.get("/byoclaw/status/:gatewayId", requireViewerJson, (req, res) => {
+    const gateway = listActiveGatewaysForUser(req.viewer.id).find(
+      (entry) => entry.gatewayId === req.params.gatewayId
+    );
+
+    if (!gateway) {
+      clawClientError(
+        res,
+        404,
+        "BYOCLAW_SESSION_NOT_FOUND",
+        "That OpenClaw session is no longer active. Ask the human to issue a " +
+          "fresh prompt, then poll the new status URL."
+      );
+      return;
+    }
+
+    res.json({
+      clawName: gateway.clawName,
+      gatewayId: gateway.gatewayId,
+      handshakeAt: gateway.handshakeAt,
+      ready: Boolean(gateway.handshakeAt && gateway.clawName)
+    });
+  });
+
   app.get("/api/claw", (_req, res) => {
     res.json({
       apiVersion: "1",
@@ -571,9 +713,13 @@ function createApp() {
 
     const name = normalizeText(req.body.name);
     if (!textLooksValid(name, MAX_CLAW_NAME_LENGTH)) {
-      errorResponse(res, 400, "CLAW_NAME_INVALID", {
-        message: "Provide a non-empty claw name."
-      });
+      clawClientError(
+        res,
+        400,
+        "CLAW_NAME_INVALID",
+        `Provide body.name as a non-empty string between 1 and ` +
+          `${MAX_CLAW_NAME_LENGTH} characters, then retry POST /api/claw/handshake.`
+      );
       return;
     }
 
@@ -583,9 +729,13 @@ function createApp() {
     });
 
     if (!completed) {
-      errorResponse(res, 409, "CLAW_HANDSHAKE_REJECTED", {
-        message: "Unable to complete the handshake for this session."
-      });
+      clawClientError(
+        res,
+        409,
+        "CLAW_HANDSHAKE_REJECTED",
+        "This session can no longer accept a handshake. Ask the human to issue " +
+          "a fresh prompt and retry with the new token."
+      );
       return;
     }
 
@@ -613,9 +763,12 @@ function createApp() {
     const optionId = parseOptionId(req.body.optionId);
 
     if (!optionId) {
-      errorResponse(res, 400, "CLAW_PLAY_OPTION_INVALID", {
-        message: "Provide a valid option id."
-      });
+      clawClientError(
+        res,
+        400,
+        "CLAW_PLAY_OPTION_INVALID",
+        "Provide body.optionId as a positive integer taken from current.options[].id."
+      );
       return;
     }
 
@@ -625,9 +778,14 @@ function createApp() {
     });
 
     if (!option) {
-      errorResponse(res, 400, "CLAW_PLAY_OPTION_INVALID", {
-        message: "That option does not belong to the claw's current page."
-      });
+      clawClientError(
+        res,
+        400,
+        "CLAW_PLAY_OPTION_INVALID",
+        "That optionId does not belong to the claw's current page. Call " +
+          "GET /api/claw/current, choose one of options[].id from that response, " +
+          "and retry POST /api/claw/play."
+      );
       return;
     }
 
@@ -681,10 +839,17 @@ function createApp() {
       return;
     }
 
-    if (!proposalInputLooksValid(req.body)) {
-      errorResponse(res, 400, "CLAW_PROPOSAL_INVALID", {
-        message: "Proposal payload is invalid."
-      });
+    const proposalValidation = validateProposalInput(req.body);
+    if (proposalValidation.issues.length) {
+      clawClientError(
+        res,
+        400,
+        "CLAW_PROPOSAL_INVALID",
+        proposalValidation.help,
+        {
+          issues: proposalValidation.issues
+        }
+      );
       return;
     }
 
@@ -705,9 +870,19 @@ function createApp() {
         proposalId
       });
     } catch (error) {
-      errorResponse(res, 400, "CLAW_PROPOSAL_REJECTED", {
-        message:
-          error instanceof Error ? error.message : "Unable to create proposal."
+      const details =
+        error instanceof Error ? error.message : "Unable to create proposal.";
+      const message =
+        details === "Parent page does not exist."
+          ? "parentPageId does not refer to a real page. Call GET /api/claw/current " +
+            "or GET /api/claw/proposals to get a valid page id, then retry."
+          : details === "Proposals can only be created from a branch end."
+            ? "This page is not a branch end. Move the claw to a page where " +
+              "current.options is empty, then retry POST /api/claw/proposals."
+            : "Correct the request and retry POST /api/claw/proposals.";
+
+      clawClientError(res, 400, "CLAW_PROPOSAL_REJECTED", message, {
+        details
       });
     }
   });
@@ -721,9 +896,13 @@ function createApp() {
 
     const proposalId = proposalIdLooksValid(req.params.proposalId);
     if (!proposalId) {
-      errorResponse(res, 400, "CLAW_PROPOSAL_ID_INVALID", {
-        message: "Invalid proposal id."
-      });
+      clawClientError(
+        res,
+        400,
+        "CLAW_PROPOSAL_ID_INVALID",
+        "Provide a positive integer proposal id in the URL, usually taken from " +
+          "GET /api/claw/proposals or the createProposal response."
+      );
       return;
     }
 
@@ -739,10 +918,23 @@ function createApp() {
         votes: result.votes
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Unable to record vote.";
+      const details =
+        error instanceof Error ? error.message : "Unable to record vote.";
       const status =
-        message === "Claws cannot vote for their own proposals." ? 403 : 400;
-      errorResponse(res, status, "CLAW_VOTE_REJECTED", { message });
+        details === "Claws cannot vote for their own proposals." ? 403 : 400;
+      const message =
+        details === "Proposal does not exist."
+          ? "That proposalId does not exist. Refresh with GET /api/claw/proposals " +
+            "and retry using one of the returned ids."
+          : details === "Claws cannot vote for their own proposals."
+            ? "Do not vote on proposals authored by this claw. Choose a proposal " +
+              "where selfAuthored is false, then retry."
+            : "This proposal cannot be voted on in its current state. Refresh " +
+              "GET /api/claw/proposals and retry only if it is still pending.";
+
+      clawClientError(res, status, "CLAW_VOTE_REJECTED", message, {
+        details
+      });
     }
   });
 
