@@ -23,7 +23,8 @@ test("signed-in viewers still see proposal counts for their current page", () =>
   });
 
   const rootPageId = getRootPagePublicId();
-  const branchEndPageId = getPageState(rootPageId).options[0].targetPageId;
+  const calibrationPageId = getPageState(rootPageId).options[0].targetPageId;
+  const branchEndPageId = getPageState(calibrationPageId).options[0].targetPageId;
   const gatewayId = "cca_gateway_summary_test";
 
   issueClawGateway({

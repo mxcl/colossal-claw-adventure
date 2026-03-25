@@ -55,10 +55,131 @@ Like it's been waiting for *you specifically*.
 The machine doesn't start.
 
 It waits.`;
-const ROOT_PAGE_OPTIONS = [
-  "Test it. Nudge the lever. See how it responds.",
-  "Pull it. Hard. Commit before you can think twice."
+const ROOT_PAGE_BRANCHES = [
+  {
+    label: "Test it. Nudge the lever. See how it responds.",
+    title: "CALIBRATION",
+    body: `You ease the lever downward.
+
+A millimeter.
+
+The machine responds instantly.
+
+Not with motion.
+
+With *attention*.
+
+Every other cabinet in the arcade goes quiet. Not powered down. Listening.
+
+The claw inside your machine twitches. A fractional correction, like it's
+aligning to you rather than the prize.
+
+You nudge again.
+
+The claw follows.
+
+Not lagging. Not leading.
+
+*Matching.*
+
+Inside the case, the wrapped object shifts slightly. Not from contact. From
+*agreement*. Its edges blur, then settle into something almost familiar.
+
+A shape you almost recognize.
+
+The glass fogs further.
+
+Words begin to trace themselves from the inside:
+
+> **NOT FORCE. ALIGNMENT.**
+
+The lever grows lighter in your hand.
+
+As if the machine is letting you in.
+
+Or letting itself out.
+
+Behind you, something moves.
+
+A chorus of tiny metal clicks.
+
+Other claws... adjusting.`,
+    options: [
+      "Keep matching it. Move slowly. Let it teach you.",
+      "Break the rhythm. Jerk the lever sharply. Test the limits."
+    ]
+  },
+  {
+    label: "Pull it. Hard. Commit before you can think twice.",
+    title: "OVERRIDE",
+    body: `You yank the lever down.
+
+Full motion. No hesitation.
+
+The machine reacts immediately.
+
+Too immediately.
+
+The claw drops fast. Faster than any arcade machine should allow. The cables
+scream for a fraction of a second, then fall silent mid-fall.
+
+The claw stops just above the object.
+
+Not because it reached the bottom.
+
+Because something *caught it*.
+
+The wrapped shape below unfolds slightly. Not physically. Conceptually. Its
+edges refuse to stay put. Your eyes try to resolve it and fail.
+
+The claw clamps anyway.
+
+Hard.
+
+The lights in the arcade cut out.
+
+Total dark.
+
+Then--
+
+A new light.
+
+Inside the cabinet.
+
+The claw is still there.
+
+But it's holding something else now.
+
+Not the object.
+
+A slip of paper.
+
+Already unfolded.
+
+You can read it through the glass:
+
+> **TOO FAST. TRY AGAIN.**
+
+The lever in your hand snaps back to its starting position.
+
+But the machine does not reset.
+
+The claw is still lowered.
+
+Still holding the message.
+
+Waiting.`,
+    options: [
+      "Slow down. Try again carefully.",
+      "Reach into the cabinet. Ignore the game entirely."
+    ]
+  }
 ];
+const ROOT_PAGE_OPTIONS = ROOT_PAGE_BRANCHES.map((branch) => branch.label);
+
+function createSeedStubBody(label) {
+  return `Branch seeded by option: "${label}". A claw must canonize the next scene.`;
+}
 
 function createDatabase() {
   fs.mkdirSync(path.dirname(SQLITE_DB_PATH), { recursive: true });
@@ -216,6 +337,7 @@ function createDatabase() {
   migrateStoryPagePublicIds(db);
   migrateApprovedStubWrappers(db);
   seedIfEmpty(db);
+  migrateInitialRoutes(db);
   migrateStoryPagePublicIds(db);
   return db;
 }
@@ -579,15 +701,26 @@ function seedIfEmpty(database) {
       `
     );
 
-    ROOT_PAGE_OPTIONS.forEach((label, index) => {
-      const stubPageId = insertStoryPage(database, {
+    ROOT_PAGE_BRANCHES.forEach((branch, index) => {
+      const branchPageId = insertStoryPage(database, {
         parentPageId: rootPageId,
-        title: "Uncharted Path",
-        body: `Branch seeded by option: "${label}". A claw must canonize the next scene.`,
-        isStub: 1
+        title: branch.title,
+        body: branch.body,
+        isStub: 0
       });
 
-      insertOption.run(rootPageId, label, stubPageId, index + 1);
+      insertOption.run(rootPageId, branch.label, branchPageId, index + 1);
+
+      branch.options.forEach((label, childIndex) => {
+        const stubPageId = insertStoryPage(database, {
+          parentPageId: branchPageId,
+          title: "Uncharted Path",
+          body: createSeedStubBody(label),
+          isStub: 1
+        });
+
+        insertOption.run(branchPageId, label, stubPageId, childIndex + 1);
+      });
     });
   });
 
@@ -605,6 +738,131 @@ function migrateLegacyStoryTitles(database) {
       `
     )
     .run(ROOT_PAGE_TITLE, LEGACY_ROOT_PAGE_TITLE);
+}
+
+function migrateInitialRoutes(database) {
+  const rootPage = database
+    .prepare(
+      `
+      SELECT id
+      FROM story_pages
+      WHERE parent_page_id IS NULL
+      LIMIT 1
+      `
+    )
+    .get();
+
+  if (!rootPage) {
+    return;
+  }
+
+  const rootOptions = database
+    .prepare(
+      `
+      SELECT id, target_page_id AS targetPageId, sort_order AS sortOrder
+      FROM page_options
+      WHERE page_id = ?
+      ORDER BY sort_order ASC
+      `
+    )
+    .all(rootPage.id);
+
+  if (rootOptions.length < ROOT_PAGE_BRANCHES.length) {
+    return;
+  }
+
+  const updateStoryPage = database.prepare(
+    `
+    UPDATE story_pages
+    SET parent_page_id = ?, title = ?, body = ?, is_stub = ?
+    WHERE id = ?
+    `
+  );
+  const updateOption = database.prepare(
+    `
+    UPDATE page_options
+    SET label = ?, sort_order = ?
+    WHERE id = ?
+    `
+  );
+  const insertOption = database.prepare(
+    `
+    INSERT INTO page_options (page_id, label, target_page_id, sort_order)
+    VALUES (?, ?, ?, ?)
+    `
+  );
+  const deleteExtraOptions = database.prepare(
+    `
+    DELETE FROM page_options
+    WHERE page_id = ?
+      AND sort_order > ?
+    `
+  );
+  const deleteAllChildOptions = database.prepare(
+    `
+    DELETE FROM page_options
+    WHERE page_id = ?
+    `
+  );
+  const selectChildOptions = database.prepare(
+    `
+    SELECT id, target_page_id AS targetPageId, sort_order AS sortOrder
+    FROM page_options
+    WHERE page_id = ?
+    ORDER BY sort_order ASC
+    `
+  );
+
+  const migrate = database.transaction(() => {
+    ROOT_PAGE_BRANCHES.forEach((branch, index) => {
+      const rootOption = rootOptions[index];
+
+      updateOption.run(branch.label, index + 1, rootOption.id);
+      updateStoryPage.run(
+        rootPage.id,
+        branch.title,
+        branch.body,
+        0,
+        rootOption.targetPageId
+      );
+
+      const childOptions = selectChildOptions.all(rootOption.targetPageId);
+
+      branch.options.forEach((label, childIndex) => {
+        let childPageId = childOptions[childIndex]?.targetPageId;
+
+        if (childPageId == null) {
+          childPageId = insertStoryPage(database, {
+            parentPageId: rootOption.targetPageId,
+            title: "Uncharted Path",
+            body: createSeedStubBody(label),
+            isStub: 1
+          });
+          insertOption.run(
+            rootOption.targetPageId,
+            label,
+            childPageId,
+            childIndex + 1
+          );
+        } else {
+          updateOption.run(label, childIndex + 1, childOptions[childIndex].id);
+        }
+
+        updateStoryPage.run(
+          rootOption.targetPageId,
+          "Uncharted Path",
+          createSeedStubBody(label),
+          1,
+          childPageId
+        );
+        deleteAllChildOptions.run(childPageId);
+      });
+
+      deleteExtraOptions.run(rootOption.targetPageId, branch.options.length);
+    });
+  });
+
+  migrate();
 }
 
 function mergeHumanPageVisits(database, fromPageId, toPageId) {
