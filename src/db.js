@@ -1062,7 +1062,7 @@ function getProposalSummary(parentPageId, viewerClawIds = null) {
         END) AS viewerVoteCount`
     : "0 AS viewerVoteCount";
   const params = viewerIds.length
-    ? [parentPageId, ...viewerIds, ...viewerIds]
+    ? [...viewerIds, ...viewerIds, parentPageId]
     : [parentPageId];
   const summary = db
     .prepare(
