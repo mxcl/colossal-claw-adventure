@@ -458,11 +458,16 @@ function renderGatewayActivity(gateway, currentPage) {
     return "";
   }
 
-  const activityItems = gateway.activity || [];
+  const activity = gateway.activity || {};
+  const activityItems = activity.items || [];
+  const visitedPageCount = Number(activity.visitedPageCount || 0);
+  const visitedPageLabel =
+    visitedPageCount === 1 ? "1 page visited this session." : `${visitedPageCount} pages visited this session.`;
 
   return `
     <div class="spec-card">
       <span class="eyebrow">Claw Activity</span>
+      <p>${escapeHtml(visitedPageLabel)}</p>
       ${
         activityItems.length
           ? `<div class="claw-list">
@@ -498,8 +503,11 @@ function renderClawStatusDetails(gateway, currentPage) {
         startingTitle
       )} to ${escapeHtml(currentTitle)}.`
     : `${escapeHtml(gateway.clawName)} is still on ${escapeHtml(currentTitle)}.`;
-  const latestActivity = gateway.activity && gateway.activity.length
-    ? gateway.activity[0].summary
+  const activityItems = gateway.activity && gateway.activity.items
+    ? gateway.activity.items
+    : [];
+  const latestActivity = activityItems.length
+    ? activityItems[0].summary
     : "";
   const idleSeconds = Number(gateway.idleSeconds || 0);
   let idleCopy = "";

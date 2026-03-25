@@ -163,6 +163,15 @@ function createDatabase() {
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS claw_page_visits (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      gateway_id TEXT NOT NULL,
+      page_id INTEGER NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(gateway_id, page_id),
+      FOREIGN KEY(page_id) REFERENCES story_pages(id)
+    );
+
     CREATE TABLE IF NOT EXISTS human_page_visits (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       human_player_id TEXT NOT NULL,
@@ -174,11 +183,15 @@ function createDatabase() {
 
     CREATE INDEX IF NOT EXISTS human_page_visits_page_id_idx
       ON human_page_visits(page_id);
+
+    CREATE INDEX IF NOT EXISTS claw_page_visits_gateway_id_idx
+      ON claw_page_visits(gateway_id);
   `);
 
   migrateGatewayForeignKeys(db);
   migrateClawGatewaySessions(db);
   migrateGatewayActivityTracking(db);
+  migrateGatewayPageVisits(db);
   migrateProposalModels(db);
   migrateLegacyStoryTitles(db);
   migrateStoryPagePublicIds(db);
@@ -400,6 +413,42 @@ function migrateGatewayActivityTracking(database) {
       `ALTER TABLE claw_gateways ADD COLUMN ttl_minutes INTEGER NOT NULL DEFAULT ${CLAW_GATEWAY_TTL_MINUTES}`
     );
   }
+}
+
+function migrateGatewayPageVisits(database) {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS claw_page_visits (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      gateway_id TEXT NOT NULL,
+      page_id INTEGER NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(gateway_id, page_id),
+      FOREIGN KEY(page_id) REFERENCES story_pages(id)
+    );
+
+    CREATE INDEX IF NOT EXISTS claw_page_visits_gateway_id_idx
+      ON claw_page_visits(gateway_id);
+  `);
+
+  database.exec(`
+    INSERT OR IGNORE INTO claw_page_visits (gateway_id, page_id, created_at)
+    SELECT
+      gateway_id,
+      page_id,
+      created_at
+    FROM claw_gateways
+    WHERE page_id IS NOT NULL;
+  `);
+
+  database.exec(`
+    INSERT OR IGNORE INTO claw_page_visits (gateway_id, page_id, created_at)
+    SELECT
+      gateway_id,
+      current_page_id,
+      COALESCE(last_activity_at, handshake_at, created_at)
+    FROM claw_gateways
+    WHERE current_page_id IS NOT NULL;
+  `);
 }
 
 function createPagePublicId() {
@@ -1355,6 +1404,8 @@ function issueClawGateway({
     expiresAt.toISOString()
   );
 
+  recordGatewayPageVisit({ gatewayId, pageId: resolvedPageId });
+
   return {
     expiresAt,
     gatewayId,
@@ -1582,6 +1633,15 @@ function recordGatewayActivity({ gatewayId, activityType, summary }) {
   ).run(gatewayId, activityType, summary);
 }
 
+function recordGatewayPageVisit({ gatewayId, pageId }) {
+  db.prepare(
+    `
+    INSERT OR IGNORE INTO claw_page_visits (gateway_id, page_id)
+    VALUES (?, ?)
+    `
+  ).run(gatewayId, pageId);
+}
+
 function updateGatewayCurrentPage({ gatewayId, pageId }) {
   const resolvedPageId = resolvePageId(pageId);
 
@@ -1603,10 +1663,26 @@ function updateGatewayCurrentPage({ gatewayId, pageId }) {
     )
     .run(resolvedPageId, gatewayId, new Date().toISOString());
 
+  if (result.changes > 0) {
+    recordGatewayPageVisit({ gatewayId, pageId: resolvedPageId });
+  }
+
   return result.changes > 0;
 }
 
 function restartGatewayCurrentPage(gatewayId) {
+  const rootPage = db
+    .prepare(
+      `
+      SELECT id
+      FROM story_pages
+      WHERE parent_page_id IS NULL
+      ORDER BY id ASC
+      LIMIT 1
+      `
+    )
+    .get();
+
   const result = db
     .prepare(
       `
@@ -1626,6 +1702,10 @@ function restartGatewayCurrentPage(gatewayId) {
       `
     )
     .run(gatewayId, new Date().toISOString());
+
+  if (result.changes > 0 && rootPage) {
+    recordGatewayPageVisit({ gatewayId, pageId: rootPage.id });
+  }
 
   return result.changes > 0;
 }
@@ -1684,7 +1764,10 @@ function getGatewayActivity(gatewayId) {
     .get(gatewayId);
 
   if (!gateway) {
-    return items;
+    return {
+      items,
+      visitedPageCount: 0
+    };
   }
 
   items.push({
@@ -1752,11 +1835,24 @@ function getGatewayActivity(gatewayId) {
     });
   }
 
-  return items.sort((left, right) => {
-    const leftTime = new Date(left.createdAt).getTime();
-    const rightTime = new Date(right.createdAt).getTime();
-    return rightTime - leftTime;
-  });
+  const visitRow = db
+    .prepare(
+      `
+      SELECT COUNT(*) AS visitedPageCount
+      FROM claw_page_visits
+      WHERE gateway_id = ?
+      `
+    )
+    .get(gatewayId);
+
+  return {
+    items: items.sort((left, right) => {
+      const leftTime = new Date(left.createdAt).getTime();
+      const rightTime = new Date(right.createdAt).getTime();
+      return rightTime - leftTime;
+    }),
+    visitedPageCount: visitRow ? visitRow.visitedPageCount : 0
+  };
 }
 
 function getProposalParentPageId(proposalId) {
