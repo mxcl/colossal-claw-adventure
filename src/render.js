@@ -351,33 +351,29 @@ function renderGatewayActivity(gateway, currentPage) {
     return "";
   }
 
-  const ready = Boolean(gateway.handshakeAt && gateway.clawName);
-  const currentTitle = gateway.currentPageTitle || currentPage.title;
-  const moved = gateway.currentPageId && gateway.pageId !== gateway.currentPageId;
-  const movementCopy = moved
-    ? `${escapeHtml(gateway.clawName || "This claw")} moved from ${escapeHtml(
-        gateway.pageTitle || currentPage.title
-      )} to ${escapeHtml(currentTitle)}.`
-    : ready
-      ? `${escapeHtml(gateway.clawName || "This claw")} has not advanced beyond ` +
-        "its starting page yet."
-      : "No claw actions are recorded yet because the handshake is still pending.";
+  const activityItems = gateway.activity || [];
 
   return `
     <div class="spec-card">
       <span class="eyebrow">Claw Activity</span>
-      <p>${movementCopy}</p>
-      <p class="tiny-copy">
-        ${
-          ready
-            ? `Handshake completed ${escapeHtml(formatDateTime(gateway.handshakeAt))}.`
-            : "Waiting for the claw to send its name."
-        }
-      </p>
-      <p class="tiny-copy">
-        Current page:
-        <strong>${escapeHtml(currentTitle)}</strong>
-      </p>
+      ${
+        activityItems.length
+          ? `<div class="claw-list">
+              ${activityItems
+                .map(
+                  (item) => `
+                    <article class="claw-card">
+                      <p>${escapeHtml(item.summary)}</p>
+                      <p class="tiny-copy">${escapeHtml(
+                        formatDateTime(item.createdAt)
+                      )}</p>
+                    </article>
+                  `
+                )
+                .join("")}
+            </div>`
+          : `<p>No claw activity has been recorded yet.</p>`
+      }
     </div>
   `;
 }
@@ -395,12 +391,38 @@ function renderClawStatusDetails(gateway, currentPage) {
         startingTitle
       )} to ${escapeHtml(currentTitle)}.`
     : `${escapeHtml(gateway.clawName)} is still on ${escapeHtml(currentTitle)}.`;
+  const latestActivity = gateway.activity && gateway.activity.length
+    ? gateway.activity[0].summary
+    : "";
+  const idleSeconds = Number(gateway.idleSeconds || 0);
+  let idleCopy = "";
+  if (idleSeconds > 30) {
+    const totalSeconds = idleSeconds;
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    const parts = [];
+
+    if (hours) {
+      parts.push(`${hours}h`);
+    }
+    if (minutes) {
+      parts.push(`${minutes}m`);
+    }
+    if (!hours && seconds) {
+      parts.push(`${seconds}s`);
+    }
+
+    idleCopy = `Idle for ${parts.join(" ")}.`;
+  }
 
   return `
     <p>${routeCopy}</p>
+    ${latestActivity ? `<p>${escapeHtml(latestActivity)}</p>` : ""}
     <p class="tiny-copy">
       Handshake completed at ${escapeHtml(formatTime(gateway.handshakeAt))}.
     </p>
+    ${idleCopy ? `<p class="tiny-copy">${escapeHtml(idleCopy)}</p>` : ""}
   `;
 }
 

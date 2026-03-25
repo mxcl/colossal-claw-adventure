@@ -21,6 +21,7 @@ const {
   findOptionTargetForPage,
   findPageIdByPublicId,
   getLatestActiveGatewayForUser,
+  getGatewayActivity,
   getLatestReadyGatewayForUser,
   getPageState,
   getRootPagePublicId,
@@ -305,8 +306,19 @@ function renderStoryResponse(req, res, pageId, input = {}) {
     gateway.currentPageTitle =
       gateway.currentPageTitle ||
       (gateway.currentPageId === pageState.page.id ? pageState.page.title : "");
+    gateway.activity = getGatewayActivity(gateway.gatewayId);
   }
-  const readyGateway = viewer ? getLatestReadyGatewayForUser(viewer.id) : null;
+  let readyGateway = viewer ? getLatestReadyGatewayForUser(viewer.id) : null;
+  if (readyGateway) {
+    const readyGatewayDetails = gateways.find(
+      (activeGateway) => activeGateway.gatewayId === readyGateway.gatewayId
+    );
+
+    readyGateway = readyGatewayDetails
+      ? { ...readyGatewayDetails, ...readyGateway }
+      : readyGateway;
+    readyGateway.activity = getGatewayActivity(readyGateway.gatewayId);
+  }
   const html = renderPage({
     modal: {
       authError: input.authError || "",

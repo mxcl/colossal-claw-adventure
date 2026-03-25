@@ -146,10 +146,19 @@ function createDatabase() {
       page_id INTEGER NOT NULL,
       token_hash TEXT NOT NULL UNIQUE,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      last_activity_at TEXT,
       expires_at TEXT NOT NULL,
       revoked_at TEXT,
       FOREIGN KEY(user_id) REFERENCES users(id),
       FOREIGN KEY(page_id) REFERENCES story_pages(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS claw_activity (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      gateway_id TEXT NOT NULL,
+      activity_type TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE TABLE IF NOT EXISTS human_page_visits (
@@ -167,6 +176,7 @@ function createDatabase() {
 
   migrateGatewayForeignKeys(db);
   migrateClawGatewaySessions(db);
+  migrateGatewayActivityTracking(db);
   migrateProposalModels(db);
   migrateLegacyStoryTitles(db);
   migrateStoryPagePublicIds(db);
@@ -361,6 +371,20 @@ function migrateClawGatewaySessions(database) {
     UPDATE claw_gateways
     SET current_page_id = page_id
     WHERE current_page_id IS NULL
+  `);
+}
+
+function migrateGatewayActivityTracking(database) {
+  const gatewayColumns = tableColumns(database, "claw_gateways");
+
+  if (!gatewayColumns.includes("last_activity_at")) {
+    database.exec("ALTER TABLE claw_gateways ADD COLUMN last_activity_at TEXT");
+  }
+
+  database.exec(`
+    UPDATE claw_gateways
+    SET last_activity_at = COALESCE(last_activity_at, handshake_at, created_at)
+    WHERE last_activity_at IS NULL
   `);
 }
 
@@ -1210,9 +1234,10 @@ function issueClawGateway({ gatewayId, pageId, tokenHash, userId }) {
       page_id,
       current_page_id,
       token_hash,
+      last_activity_at,
       expires_at
     )
-    VALUES (?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
     `
   ).run(
     gatewayId,
@@ -1240,6 +1265,12 @@ function listActiveGatewaysForUser(userId) {
         claw_gateways.gateway_id AS gatewayId,
         story_pages.public_id AS pageId,
         claw_gateways.created_at AS createdAt,
+        claw_gateways.last_activity_at AS lastActivityAt,
+        MAX(
+          0,
+          CAST(strftime('%s', 'now') AS INTEGER) -
+            CAST(strftime('%s', COALESCE(claw_gateways.last_activity_at, claw_gateways.created_at)) AS INTEGER)
+        ) AS idleSeconds,
         claw_gateways.expires_at AS expiresAt,
         story_pages.title AS pageTitle,
         claw_gateways.claw_name AS clawName,
@@ -1288,6 +1319,13 @@ function findGatewayByTokenHash(tokenHash) {
           current_pages.id AS currentPageDbId,
           current_pages.public_id AS currentPageId,
           claw_gateways.token_hash AS tokenHash,
+          claw_gateways.created_at AS createdAt,
+          claw_gateways.last_activity_at AS lastActivityAt,
+          MAX(
+            0,
+            CAST(strftime('%s', 'now') AS INTEGER) -
+              CAST(strftime('%s', COALESCE(claw_gateways.last_activity_at, claw_gateways.created_at)) AS INTEGER)
+          ) AS idleSeconds,
           claw_gateways.expires_at AS expiresAt,
           claw_gateways.revoked_at AS revokedAt,
           claw_gateways.claw_name AS clawName,
@@ -1323,6 +1361,12 @@ function getLatestActiveGatewayForUser(userId) {
           current_pages.public_id AS currentPageId,
           current_pages.title AS currentPageTitle,
           claw_gateways.created_at AS createdAt,
+          claw_gateways.last_activity_at AS lastActivityAt,
+          MAX(
+            0,
+            CAST(strftime('%s', 'now') AS INTEGER) -
+              CAST(strftime('%s', COALESCE(claw_gateways.last_activity_at, claw_gateways.created_at)) AS INTEGER)
+          ) AS idleSeconds,
           claw_gateways.expires_at AS expiresAt,
           claw_gateways.claw_name AS clawName,
           claw_gateways.handshake_at AS handshakeAt
@@ -1357,6 +1401,12 @@ function getLatestReadyGatewayForUser(userId) {
           current_pages.public_id AS currentPageId,
           current_pages.title AS currentPageTitle,
           claw_gateways.created_at AS createdAt,
+          claw_gateways.last_activity_at AS lastActivityAt,
+          MAX(
+            0,
+            CAST(strftime('%s', 'now') AS INTEGER) -
+              CAST(strftime('%s', COALESCE(claw_gateways.last_activity_at, claw_gateways.created_at)) AS INTEGER)
+          ) AS idleSeconds,
           claw_gateways.expires_at AS expiresAt,
           claw_gateways.claw_name AS clawName,
           claw_gateways.handshake_at AS handshakeAt
@@ -1393,7 +1443,8 @@ function completeGatewayHandshake({ gatewayId, name }) {
       UPDATE claw_gateways
       SET
         claw_name = ?,
-        handshake_at = COALESCE(handshake_at, CURRENT_TIMESTAMP)
+        handshake_at = COALESCE(handshake_at, CURRENT_TIMESTAMP),
+        last_activity_at = CURRENT_TIMESTAMP
       WHERE gateway_id = ?
         AND revoked_at IS NULL
         AND expires_at > ?
@@ -1402,6 +1453,15 @@ function completeGatewayHandshake({ gatewayId, name }) {
     .run(normalizedName, gatewayId, new Date().toISOString());
 
   return result.changes > 0;
+}
+
+function recordGatewayActivity({ gatewayId, activityType, summary }) {
+  db.prepare(
+    `
+    INSERT INTO claw_activity (gateway_id, activity_type, summary)
+    VALUES (?, ?, ?)
+    `
+  ).run(gatewayId, activityType, summary);
 }
 
 function updateGatewayCurrentPage({ gatewayId, pageId }) {
@@ -1415,7 +1475,9 @@ function updateGatewayCurrentPage({ gatewayId, pageId }) {
     .prepare(
       `
       UPDATE claw_gateways
-      SET current_page_id = ?
+      SET
+        current_page_id = ?,
+        last_activity_at = CURRENT_TIMESTAMP
       WHERE gateway_id = ?
         AND revoked_at IS NULL
         AND expires_at > ?
@@ -1431,13 +1493,15 @@ function restartGatewayCurrentPage(gatewayId) {
     .prepare(
       `
       UPDATE claw_gateways
-      SET current_page_id = (
+      SET
+        current_page_id = (
         SELECT id
         FROM story_pages
         WHERE parent_page_id IS NULL
         ORDER BY id ASC
         LIMIT 1
-      )
+      ),
+        last_activity_at = CURRENT_TIMESTAMP
       WHERE gateway_id = ?
         AND revoked_at IS NULL
         AND expires_at > ?
@@ -1474,6 +1538,107 @@ function findOptionTargetForPage({ optionId, pageId }) {
       )
       .get(numericOptionId, resolvedPageId) || null
   );
+}
+
+function getGatewayActivity(gatewayId) {
+  const items = [];
+  const gateway = db
+    .prepare(
+      `
+      SELECT
+        claw_gateways.gateway_id AS gatewayId,
+        claw_gateways.created_at AS createdAt,
+        claw_gateways.handshake_at AS handshakeAt,
+        claw_gateways.claw_name AS clawName,
+        start_pages.title AS pageTitle,
+        start_pages.public_id AS pageId,
+        current_pages.title AS currentPageTitle,
+        current_pages.public_id AS currentPageId
+      FROM claw_gateways
+      INNER JOIN story_pages AS start_pages
+        ON start_pages.id = claw_gateways.page_id
+      LEFT JOIN story_pages AS current_pages
+        ON current_pages.id = claw_gateways.current_page_id
+      WHERE claw_gateways.gateway_id = ?
+      LIMIT 1
+      `
+    )
+    .get(gatewayId);
+
+  if (!gateway) {
+    return items;
+  }
+
+  items.push({
+    createdAt: gateway.createdAt,
+    summary: `Session started from ${gateway.pageTitle}.`,
+    type: "session"
+  });
+
+  if (gateway.handshakeAt && gateway.clawName) {
+    items.push({
+      createdAt: gateway.handshakeAt,
+      summary: `Handshake completed as ${gateway.clawName}.`,
+      type: "handshake"
+    });
+  }
+
+  const proposals = db
+    .prepare(
+      `
+      SELECT
+        proposals.id,
+        proposals.page_title AS pageTitle,
+        proposals.created_at AS createdAt,
+        parent_pages.title AS parentPageTitle
+      FROM proposals
+      INNER JOIN story_pages AS parent_pages
+        ON parent_pages.id = proposals.parent_page_id
+      WHERE proposals.author_claw_id = ?
+      ORDER BY proposals.created_at DESC, proposals.id DESC
+      `
+    )
+    .all(gatewayId);
+
+  for (const proposal of proposals) {
+    items.push({
+      createdAt: proposal.createdAt,
+      summary:
+        `Created proposal #${proposal.id} "${proposal.pageTitle}" for ` +
+        `${proposal.parentPageTitle}.`,
+      type: "proposal"
+    });
+  }
+
+  const votes = db
+    .prepare(
+      `
+      SELECT
+        proposal_votes.proposal_id AS proposalId,
+        proposal_votes.created_at AS createdAt,
+        proposals.page_title AS pageTitle
+      FROM proposal_votes
+      INNER JOIN proposals
+        ON proposals.id = proposal_votes.proposal_id
+      WHERE proposal_votes.claw_id = ?
+      ORDER BY proposal_votes.created_at DESC, proposal_votes.id DESC
+      `
+    )
+    .all(gatewayId);
+
+  for (const vote of votes) {
+    items.push({
+      createdAt: vote.createdAt,
+      summary: `Voted on proposal #${vote.proposalId} "${vote.pageTitle}".`,
+      type: "vote"
+    });
+  }
+
+  return items.sort((left, right) => {
+    const leftTime = new Date(left.createdAt).getTime();
+    const rightTime = new Date(right.createdAt).getTime();
+    return rightTime - leftTime;
+  });
 }
 
 function listClawsForUser(userId) {
@@ -1649,6 +1814,14 @@ function createProposal(input) {
     input.options.forEach((label, index) => {
       insertOption.run(proposalId, label, index + 1);
     });
+
+    db.prepare(
+      `
+      UPDATE claw_gateways
+      SET last_activity_at = CURRENT_TIMESTAMP
+      WHERE gateway_id = ?
+      `
+    ).run(input.authorClawId);
 
     return proposalId;
   });
@@ -1834,6 +2007,16 @@ function castVote({ clawId, proposalId }) {
     if (votes >= VOTE_THRESHOLD) {
       approveProposal(proposalId);
     }
+
+    if (accepted) {
+      db.prepare(
+        `
+        UPDATE claw_gateways
+        SET last_activity_at = CURRENT_TIMESTAMP
+        WHERE gateway_id = ?
+        `
+      ).run(clawId);
+    }
   });
 
   transaction();
@@ -1879,6 +2062,7 @@ module.exports = {
   findGatewayByTokenHash,
   getPageState,
   getLatestActiveGatewayForUser,
+  getGatewayActivity,
   getLatestReadyGatewayForUser,
   getRootPageId,
   getRootPagePublicId,
