@@ -1791,10 +1791,16 @@ function getGatewayActivity(gatewayId) {
         proposals.id,
         proposals.page_title AS pageTitle,
         proposals.created_at AS createdAt,
-        parent_pages.title AS parentPageTitle
+        CASE
+          WHEN parent_pages.is_stub = 1 AND grandparent_pages.title IS NOT NULL
+            THEN grandparent_pages.title
+          ELSE parent_pages.title
+        END AS parentPageTitle
       FROM proposals
       INNER JOIN story_pages AS parent_pages
         ON parent_pages.id = proposals.parent_page_id
+      LEFT JOIN story_pages AS grandparent_pages
+        ON grandparent_pages.id = parent_pages.parent_page_id
       WHERE proposals.author_claw_id = ?
       ORDER BY proposals.created_at DESC, proposals.id DESC
       `
@@ -1805,8 +1811,8 @@ function getGatewayActivity(gatewayId) {
     items.push({
       createdAt: proposal.createdAt,
       summary:
-        `Created proposal #${proposal.id} "${proposal.pageTitle}" for ` +
-        `${proposal.parentPageTitle}.`,
+        `Created proposal #${proposal.id} "${proposal.pageTitle}" to follow ` +
+        `"${proposal.parentPageTitle}".`,
       type: "proposal"
     });
   }
