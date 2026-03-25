@@ -855,12 +855,11 @@ function renderPage(input) {
   </html>`;
 }
 
-function renderLandingPage({ pageCount, readyGateway, rootPath, viewer }) {
+function renderLandingPage({ pageCount, readyGateway, rootPath }) {
   const pageTitle = "Colossal Claw Adventure";
   const pageDescription =
     "Start the story, connect an OpenClaw, and shape the next branches.";
   const pageLabel = pageCount === 1 ? "page" : "pages";
-  const secondaryHref = `${rootPath}?byoclaw=1`;
   const continuePath =
     readyGateway && readyGateway.currentPageId
       ? formatPath(readyGateway.currentPageId)
@@ -902,13 +901,6 @@ function renderLandingPage({ pageCount, readyGateway, rootPath, viewer }) {
             <div class="landing-actions">
               <a class="primary-btn landing-cta" href="${escapeHtml(continuePath)}">
                 ${startedPlaying ? "Continue" : "Begin the Adventure"}
-              </a>
-              <a class="secondary-btn landing-cta" href="${escapeHtml(secondaryHref)}">
-                ${
-                  readyGateway
-                    ? `Manage ${escapeHtml(readyGateway.clawName)}`
-                    : "Bring Your Claw"
-                }
               </a>
             </div>
           </div>
