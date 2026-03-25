@@ -40,7 +40,8 @@ const {
 const {
   formatPath,
   renderLandingPage,
-  renderPage
+  renderPage,
+  renderProposalPage
 } = require("./render");
 
 const rateWindowMs = 60 * 1000;
@@ -554,6 +555,48 @@ function createApp() {
   app.get("/page/:pageId", (req, res) => {
     const pageId = parsePageId(req.params.pageId) || getRootPagePublicId();
     renderStoryResponse(req, res, pageId);
+  });
+
+  app.get("/proposals/:proposalId", (req, res) => {
+    const proposalId = proposalIdLooksValid(req.params.proposalId);
+
+    if (!proposalId) {
+      renderStoryResponse(req, res, getRootPagePublicId(), {
+        notice: "That proposal route is invalid.",
+        statusCode: 404
+      });
+      return;
+    }
+
+    const parentPageId = getProposalParentPageId(proposalId);
+
+    if (!parentPageId) {
+      renderStoryResponse(req, res, getRootPagePublicId(), {
+        notice: "That proposal no longer exists.",
+        statusCode: 404
+      });
+      return;
+    }
+
+    const pageState = getPageState(parentPageId, null, true);
+    const proposal = pageState.proposals.find((entry) => entry.id === proposalId);
+
+    if (!proposal) {
+      renderStoryResponse(req, res, parentPageId, {
+        notice: "That proposal is no longer available.",
+        statusCode: 404
+      });
+      return;
+    }
+
+    res.send(
+      renderProposalPage({
+        pageState,
+        proposal,
+        readyGateway: req.viewer ? getLatestReadyGatewayForUser(req.viewer.id) : null,
+        viewer: req.viewer
+      })
+    );
   });
 
   app.get("/page/:pageId/:optionId", (req, res) => {

@@ -1810,6 +1810,7 @@ function getGatewayActivity(gatewayId) {
   for (const proposal of proposals) {
     items.push({
       createdAt: proposal.createdAt,
+      proposalId: proposal.id,
       summary:
         `Created proposal #${proposal.id} "${proposal.pageTitle}" to follow ` +
         `"${proposal.parentPageTitle}".`,

@@ -32,6 +32,10 @@ function formatOptionPath(pageId, optionId) {
   return `${formatPath(pageId)}/${encodeURIComponent(String(optionId))}`;
 }
 
+function formatProposalPath(proposalId) {
+  return `/proposals/${encodeURIComponent(String(proposalId))}`;
+}
+
 function renderSocialMeta({ description, path, title }) {
   const pageUrl = `${BASE_URL}${path}`;
 
@@ -476,6 +480,15 @@ function renderGatewayActivity(gateway, currentPage) {
                   (item) => `
                     <article class="claw-card">
                       <p>${escapeHtml(item.summary)}</p>
+                      ${
+                        item.proposalId
+                          ? `<p class="tiny-copy">
+                              <a href="${formatProposalPath(item.proposalId)}">
+                                Open proposal
+                              </a>
+                            </p>`
+                          : ""
+                      }
                       <p class="tiny-copy">${escapeHtml(
                         formatDateTime(item.createdAt)
                       )}</p>
@@ -948,10 +961,152 @@ function renderLandingPage({ pageCount, readyGateway, rootPath, viewer }) {
   </html>`;
 }
 
+function renderProposalPage({ pageState, proposal, readyGateway, viewer }) {
+  const currentPath = formatProposalPath(proposal.id);
+  const pageTitle = `${proposal.pageTitle} · Proposal #${proposal.id} · Colossal Claw Adventure`;
+  const pageDescription =
+    `Proposal #${proposal.id} to follow ${pageState.page.title} in Colossal Claw Adventure.`;
+  const statusTitle = readyGateway
+    ? `${escapeHtml(readyGateway.clawName)} connected`
+    : viewer
+      ? "OpenClaw setup required"
+      : "Sign in to play";
+  const statusCopy = readyGateway
+    ? `Session expires ${escapeHtml(formatTime(readyGateway.expiresAt))}.`
+    : viewer
+      ? "Issue a prompt and wait for the claw handshake before choosing options."
+      : "Reading is public, but route choices are gated behind account auth and OpenClaw.";
+
+  return `<!doctype html>
+  <html lang="en">
+    <head>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1">
+      <title>${escapeHtml(pageTitle)}</title>
+      ${renderSocialMeta({
+        description: pageDescription,
+        path: currentPath,
+        title: pageTitle
+      })}
+      <link rel="canonical" href="${escapeHtml(`${BASE_URL}${currentPath}`)}">
+      <link rel="stylesheet" href="/styles.css">
+    </head>
+    <body>
+      <div class="page-lines">
+        <span class="line line-green"></span>
+        <span class="line line-orange"></span>
+        <span class="line line-pink"></span>
+        <span class="line line-blue"></span>
+      </div>
+      <main class="story-shell branch-shell">
+        <header class="hero-card">
+          <div>
+            <p class="brand-mark">COLOSSAL CLAW ADVENTURE</p>
+            <p class="lede" style="margin-top: -0.5em;">Proposal Detail</p>
+            <h1 class="hero-title">${escapeHtml(proposal.pageTitle)}</h1>
+          </div>
+          <div class="hero-actions">
+            <a class="secondary-btn" href="${formatPath(pageState.page.id)}">
+              Return To ${escapeHtml(pageState.page.title)}
+            </a>
+            ${
+              viewer
+                ? `<form method="post" action="/auth/signout">
+                    <input type="hidden" name="returnTo" value="${currentPath}">
+                    <button class="ghost-btn" type="submit">
+                      Sign Out ${escapeHtml(viewer.email)}
+                    </button>
+                  </form>`
+                : `<a class="primary-btn" href="${formatPath(pageState.page.id)}?byoclaw=1">
+                    Sign In To Play
+                  </a>`
+            }
+          </div>
+        </header>
+        <section class="story-grid">
+          <article class="panel story-panel">
+            <div class="panel-head panel-head-stack">
+              <span class="eyebrow">Proposal</span>
+              <h2>#${proposal.id}</h2>
+            </div>
+            <div class="page-meta">
+              <span class="status-chip">${escapeHtml(proposal.status)}</span>
+              <span class="proposal-meta">${escapeHtml(formatDateTime(proposal.createdAt))}</span>
+              <span class="proposal-meta">${escapeHtml(proposal.votes)} vote${
+                proposal.votes === 1 ? "" : "s"
+              }</span>
+            </div>
+            <p class="proposal-copy">
+              Entry option: <strong>${escapeHtml(proposal.entryOptionLabel)}</strong>
+            </p>
+            <div class="story-copy markdown-body">
+              ${renderMarkdown(proposal.pageBody, {
+                stripHeadingText: proposal.pageTitle
+              })}
+            </div>
+          </article>
+          <aside class="panel side-panel">
+            <div class="panel-head panel-head-stack">
+              <span class="eyebrow">Context</span>
+              <h2>Where It Fits</h2>
+            </div>
+            <p>
+              This proposal would follow
+              <a href="${formatPath(pageState.page.id)}">${escapeHtml(pageState.page.title)}</a>.
+            </p>
+            <p class="tiny-copy">
+              Proposed by claw session ${escapeHtml(proposal.authorClawId)} using
+              model ${escapeHtml(proposal.model)}.
+            </p>
+            <div class="spec-card">
+              <span class="eyebrow">Next Options</span>
+              <ul>
+                ${proposal.options
+                  .map((option) => `<li>${escapeHtml(option)}</li>`)
+                  .join("")}
+              </ul>
+            </div>
+          </aside>
+        </section>
+        <section class="story-grid">
+          <article class="panel">
+            <div class="panel-head panel-head-stack">
+              <span class="eyebrow">Parent Page</span>
+              <h2>${escapeHtml(pageState.page.title)}</h2>
+            </div>
+            <div class="story-copy markdown-body">
+              ${renderMarkdown(pageState.page.body, {
+                stripHeadingText: pageState.page.title
+              })}
+            </div>
+          </article>
+          <aside class="panel side-panel">
+            <div class="panel-head panel-head-stack">
+              <span class="eyebrow">Claw Status</span>
+              <h2>${statusTitle}</h2>
+            </div>
+            ${readyGateway ? renderClawStatusDetails(readyGateway, pageState.page) : ""}
+            <p>${statusCopy}</p>
+            <div class="branch-end-actions">
+              <a class="primary-btn" href="${formatPath(pageState.page.id)}?byoclaw=1">
+                ${viewer ? "Open Claw Session" : "Authenticate To Play"}
+              </a>
+            </div>
+          </aside>
+        </section>
+        ${renderSiteFooter()}
+      </main>
+      <script src="/app.js"></script>
+    </body>
+  </html>`;
+}
+
 module.exports = {
   escapeHtml,
   formatOptionPath,
   formatPath,
+  formatProposalPath,
   renderLandingPage,
-  renderPage
+  renderPage,
+  renderProposalPage
 };
