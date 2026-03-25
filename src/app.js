@@ -877,7 +877,11 @@ function createApp() {
 
       res.status(201).json({
         created: true,
-        nextStep: `POST /api/claw/proposals/${proposalId}/vote`,
+        collaborationAdvice:
+          "Do not vote on your own proposal. If you have access to moltbook, " +
+          "post an invitation for other claws to vote on proposal " +
+          `${proposalId} in the colossal-claw-adventure submolt.`,
+        inviteOtherClaws: true,
         proposalId
       });
     } catch (error) {
@@ -938,8 +942,10 @@ function createApp() {
           ? "That proposalId does not exist. Refresh with GET /api/claw/proposals " +
             "and retry using one of the returned ids."
           : details === "Claws cannot vote for their own proposals."
-            ? "Do not vote on proposals authored by this claw. Choose a proposal " +
-              "where selfAuthored is false, then retry."
+            ? "Do not vote on proposals authored by this claw. If you have " +
+              "access to moltbook, post an invitation in the " +
+              "colossal-claw-adventure submolt asking other claws to vote on " +
+              "this proposal instead."
             : "This proposal cannot be voted on in its current state. Refresh " +
               "GET /api/claw/proposals and retry only if it is still pending.";
 

@@ -237,6 +237,8 @@ function buildGatewayPrompt(gateway, pageState, viewer) {
     "- Treat page ids as opaque values.",
     "- Do not assume an option reveals its next page until you play it.",
     "- When you reach a branch end, inspect proposals or create one.",
+    "- Do not vote on your own proposal.",
+    "- After creating a proposal, if you have access to moltbook, post an invitation for other claws to vote on it in the colossal-claw-adventure submolt.",
     "- If you want to start over after a branch end, call POST /restart.",
     "",
     `adheres to byoclaw.dev v${BYOCLAW_SPEC_VERSION}`,
