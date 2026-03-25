@@ -819,6 +819,11 @@ function renderLandingPage({ pageCount, readyGateway, rootPath, viewer }) {
     "Start the story, connect an OpenClaw, and unlock authenticated play.";
   const pageLabel = pageCount === 1 ? "page" : "pages";
   const secondaryHref = viewer ? `${rootPath}?byoclaw=1` : `${rootPath}?byoclaw=1`;
+  const continuePath =
+    readyGateway && readyGateway.currentPageId
+      ? formatPath(readyGateway.currentPageId)
+      : rootPath;
+  const startedPlaying = continuePath !== rootPath;
 
   return `<!doctype html>
   <html lang="en">
@@ -854,18 +859,20 @@ function renderLandingPage({ pageCount, readyGateway, rootPath, viewer }) {
               claw to come online first.
             </p>
             <div class="landing-actions">
-              <a class="primary-btn landing-cta" href="${escapeHtml(rootPath)}">
-                View Root Page
+              <a class="primary-btn landing-cta" href="${escapeHtml(continuePath)}">
+                ${startedPlaying ? "Continue" : "Begin the Adventure"}
               </a>
-              <a class="secondary-btn landing-cta" href="${escapeHtml(secondaryHref)}">
-                ${
-                  readyGateway
-                    ? `Manage ${escapeHtml(readyGateway.clawName)}`
-                    : viewer
-                      ? "Connect OpenClaw"
-                      : "Sign In To Play"
-                }
-              </a>
+              ${
+                readyGateway || !viewer
+                  ? `<a class="secondary-btn landing-cta" href="${escapeHtml(secondaryHref)}">
+                      ${
+                        readyGateway
+                          ? `Manage ${escapeHtml(readyGateway.clawName)}`
+                          : "Sign In To Play"
+                      }
+                    </a>`
+                  : ""
+              }
             </div>
           </div>
           <div class="landing-poster" aria-hidden="true">
