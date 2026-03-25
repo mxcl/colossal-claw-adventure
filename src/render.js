@@ -137,25 +137,22 @@ function renderStoryOptions(pageState, viewer, readyGateway, byoclawHref) {
                 href="${formatOptionPath(pageState.page.id, option.id)}"
               >
                 <strong>${escapeHtml(option.label)}</strong>
-                <span class="tiny-copy">
-                  ${readyGateway ? "Play this branch" : "Requires OpenClaw"}
-                </span>
               </a>
             `
           )
           .join("")}
       </div>
-      ${
-        readyGateway
-          ? ""
-          : `<div class="branch-end-actions">
-              <a class="primary-btn" href="${byoclawHref}">
-                ${viewer ? "Finish OpenClaw Setup" : "Sign In To Play"}
-              </a>
-            </div>`
-      }
     </section>
   `;
+}
+
+function formatTime(value) {
+  return new Date(value)
+    .toLocaleTimeString("en-US", {
+      hour: "numeric",
+      minute: "2-digit"
+    })
+    .replace(" ", "");
 }
 
 function renderBranchEndPanel(pageState, byoclawHref) {
@@ -307,7 +304,7 @@ function renderGatewayPrompt(gateway, pageState, viewer) {
         }
       </p>
       <p class="tiny-copy">
-        Expires ${escapeHtml(formatDateTime(gateway.expiresAt))}.
+        Expires ${escapeHtml(formatTime(gateway.expiresAt))}.
       </p>
     </div>
     ${promptBlock}
@@ -325,7 +322,7 @@ function renderActiveGateway(gateway) {
       </div>
       <p class="proposal-meta">
         Session ${escapeHtml(gateway.gatewayId)} · expires
-        ${escapeHtml(formatDateTime(gateway.expiresAt))}
+        ${escapeHtml(formatTime(gateway.expiresAt))}
       </p>
       <p class="tiny-copy">
         ${
@@ -540,12 +537,12 @@ function renderPage(input) {
     pageState.page.humanVisitPercent
   );
   const statusTitle = readyGateway
-    ? `${escapeHtml(readyGateway.clawName)} is ready`
+    ? "Claw connected"
     : viewer
       ? "OpenClaw setup required"
       : "Sign in to play";
   const statusCopy = readyGateway
-    ? `Session expires ${escapeHtml(formatDateTime(readyGateway.expiresAt))}.`
+    ? `Session expires ${escapeHtml(formatTime(readyGateway.expiresAt))}.`
     : viewer
       ? "Issue a prompt and wait for the claw handshake before choosing options."
       : "Reading is public, but route choices are gated behind account auth and OpenClaw.";
@@ -640,23 +637,21 @@ function renderPage(input) {
             </p>
           </aside>
         </section>
-        <section class="panel panel-wide">
+        <section class="story-grid">
+          ${renderStoryOptions(pageState, viewer, readyGateway, byoclawHref)}
+          <aside class="panel side-panel">
           <div class="panel-head">
-            <span class="eyebrow">Play Status</span>
+            <span class="eyebrow">Claw Status</span>
             <h2>${statusTitle}</h2>
           </div>
-            <p>${statusCopy}</p>
-            <p>
-              Humans may view <code>/page/:id</code> without signing in. Route
-              choices now go through gated option URLs.
-            </p>
-            <div class="branch-end-actions">
-              <a class="primary-btn" href="${byoclawHref}">
-                ${viewer ? "Open Claw Session" : "Authenticate To Play"}
-              </a>
-            </div>
+          <p>${statusCopy}</p>
+          <div class="branch-end-actions">
+            <a class="primary-btn" href="${byoclawHref}">
+              ${viewer ? "Open Claw Session" : "Authenticate To Play"}
+            </a>
+          </div>
+          </aside>
         </section>
-        ${renderStoryOptions(pageState, viewer, readyGateway, byoclawHref)}
         ${isBranchEnd ? renderBranchEndPanel(pageState, byoclawHref) : ""}
         ${renderSiteFooter()}
       </main>
