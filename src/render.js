@@ -198,22 +198,19 @@ function renderBranchEndPanel(pageState, byoclawHref, viewer) {
           <p>Votes are needed before a draft becomes canonical.</p>
         </article>
       </div>
-      <div class="branch-end-actions">
-        <a class="primary-btn" href="${byoclawHref}">
-          Open OpenClaw Setup
-        </a>
-        ${
-          showBranchEndTokenButton
-            ? `<form method="post" action="/byoclaw/issue">
+      ${
+        showBranchEndTokenButton
+          ? `<div class="branch-end-actions">
+              <form method="post" action="/byoclaw/issue">
                 <input type="hidden" name="pageId" value="${pageState.page.id}">
                 <input type="hidden" name="scopeType" value="branch_end_only">
                 <button class="secondary-btn" type="submit">
                   Issue 10-Minute Branch-End Token
                 </button>
-              </form>`
-            : ""
-        }
-      </div>
+              </form>
+            </div>`
+          : ""
+      }
     </section>
   `;
 }
