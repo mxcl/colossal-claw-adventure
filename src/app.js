@@ -24,6 +24,7 @@ const {
   getGatewayActivity,
   getLatestReadyGatewayForUser,
   getPageState,
+  getProposalParentPageId,
   getRootPagePublicId,
   getStoryPageCount,
   getUserByEmail,
@@ -214,13 +215,15 @@ function checkRateLimit(key, limit) {
   return true;
 }
 
-function buildGatewayDetails(pageId, userId) {
+function buildGatewayDetails(pageId, userId, options = {}) {
   const token = randomBase64UrlToken(24, "cca_claw_");
   const gatewayId = randomBase64UrlToken(12, "cca_gateway_");
   const gateway = issueClawGateway({
     gatewayId,
     pageId,
+    scopeType: options.scopeType,
     tokenHash: hashToken(token),
+    ttlMinutes: options.ttlMinutes,
     userId
   });
 
@@ -250,6 +253,10 @@ function getGatewayCurrentPageId(gateway) {
 
 function isGatewayReady(gateway) {
   return Boolean(gateway && gateway.handshakeAt && gateway.clawName);
+}
+
+function isBranchEndOnlyGateway(gateway) {
+  return gateway && gateway.scopeType === "branch_end_only";
 }
 
 function buildPostAuthRedirect(userId, returnTo) {
@@ -284,7 +291,8 @@ function serializeClawState(gateway) {
 
 function renderStoryResponse(req, res, pageId, input = {}) {
   const viewer = req.viewer;
-  const pageState = getPageState(pageId, null, false);
+  let readyGateway = viewer ? getLatestReadyGatewayForUser(viewer.id) : null;
+  const pageState = getPageState(pageId, readyGateway ? readyGateway.gatewayId : null, false);
   const modalOpen = input.modalOpen || req.query.byoclaw === "1";
   const gateways = viewer ? listActiveGatewaysForUser(viewer.id) : [];
   const latestGateway = viewer ? getLatestActiveGatewayForUser(viewer.id) : null;
@@ -294,7 +302,7 @@ function renderStoryResponse(req, res, pageId, input = {}) {
     !input.gateway &&
     (input.issueGateway || (req.query.issue === "1" && !latestGateway));
   let gateway = shouldIssueGateway
-    ? buildGatewayDetails(pageState.page.id, viewer.id)
+    ? buildGatewayDetails(pageState.page.id, viewer.id, input.gatewayOptions || {})
     : input.gateway || latestGateway;
   if (gateway) {
     const gatewayDetails = gateways.find(
@@ -308,7 +316,6 @@ function renderStoryResponse(req, res, pageId, input = {}) {
       (gateway.currentPageId === pageState.page.id ? pageState.page.title : "");
     gateway.activity = getGatewayActivity(gateway.gatewayId);
   }
-  let readyGateway = viewer ? getLatestReadyGatewayForUser(viewer.id) : null;
   if (readyGateway) {
     const readyGatewayDetails = gateways.find(
       (activeGateway) => activeGateway.gatewayId === readyGateway.gatewayId
@@ -655,10 +662,32 @@ function createApp() {
 
   app.post("/byoclaw/issue", requireViewer, (req, res) => {
     const pageId = parsePageId(req.body.pageId) || getRootPagePublicId();
+    const scopeType =
+      req.body.scopeType === "branch_end_only" ? "branch_end_only" : "full";
+    const ttlMinutes = scopeType === "branch_end_only" ? 10 : undefined;
+
+    if (scopeType === "branch_end_only") {
+      const pageState = getPageState(pageId, null, false);
+      if (pageState.options.length > 0) {
+        renderStoryResponse(req, res, pageId, {
+          clawError: "Branch-end-only tokens can only be issued from a branch end.",
+          modalOpen: true,
+          statusCode: 400
+        });
+        return;
+      }
+    }
 
     renderStoryResponse(req, res, pageId, {
+      gatewayOptions: {
+        scopeType,
+        ttlMinutes
+      },
       issueGateway: true,
-      modalNotice: "Issued a 2-hour OpenClaw session prompt for this page.",
+      modalNotice:
+        scopeType === "branch_end_only"
+          ? "Issued a 10-minute branch-end token for this page."
+          : "Issued a 2-hour OpenClaw session prompt for this page.",
       modalOpen: true
     });
   });
@@ -783,6 +812,17 @@ function createApp() {
       return;
     }
 
+    if (isBranchEndOnlyGateway(auth.gateway)) {
+      clawClientError(
+        res,
+        403,
+        "CLAW_SCOPE_FORBIDDEN",
+        "This token is limited to acting on a single branch end. Use proposals " +
+          "or voting on that branch end; play is not allowed."
+      );
+      return;
+    }
+
     const optionId = parseOptionId(req.body.optionId);
 
     if (!optionId) {
@@ -828,6 +868,16 @@ function createApp() {
       return;
     }
 
+    if (isBranchEndOnlyGateway(auth.gateway)) {
+      clawClientError(
+        res,
+        403,
+        "CLAW_SCOPE_FORBIDDEN",
+        "This token is limited to acting on a single branch end. Restart is not allowed."
+      );
+      return;
+    }
+
     restartGatewayCurrentPage(auth.gateway.gatewayId);
     const gateway = findGatewayByTokenHash(auth.tokenHash);
     res.json(serializeClawState(gateway));
@@ -842,6 +892,18 @@ function createApp() {
 
     const requestedPageId = parsePageId(req.query.parentPageId);
     const pageId = requestedPageId || getGatewayCurrentPageId(auth.gateway);
+
+    if (isBranchEndOnlyGateway(auth.gateway) && pageId !== auth.gateway.pageId) {
+      clawClientError(
+        res,
+        403,
+        "CLAW_SCOPE_FORBIDDEN",
+        "This token is limited to branch end " + auth.gateway.pageId +
+          ". Omit parentPageId or use that exact page id."
+      );
+      return;
+    }
+
     const pageState = getPageState(pageId, auth.gateway.gatewayId, true);
 
     res.json({
@@ -872,6 +934,20 @@ function createApp() {
         {
           issues: proposalValidation.issues
         }
+      );
+      return;
+    }
+
+    if (
+      isBranchEndOnlyGateway(auth.gateway) &&
+      normalizeText(req.body.parentPageId) !== auth.gateway.pageId
+    ) {
+      clawClientError(
+        res,
+        403,
+        "CLAW_SCOPE_FORBIDDEN",
+        "This token may only create proposals for branch end " +
+          auth.gateway.pageId + "."
       );
       return;
     }
@@ -931,6 +1007,20 @@ function createApp() {
           "GET /api/claw/proposals or the createProposal response."
       );
       return;
+    }
+
+    if (isBranchEndOnlyGateway(auth.gateway)) {
+      const parentPageId = getProposalParentPageId(proposalId);
+      if (parentPageId !== auth.gateway.pageId) {
+        clawClientError(
+          res,
+          403,
+          "CLAW_SCOPE_FORBIDDEN",
+          "This token may only vote on proposals for branch end " +
+            auth.gateway.pageId + "."
+        );
+        return;
+      }
     }
 
     try {

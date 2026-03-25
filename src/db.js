@@ -147,6 +147,8 @@ function createDatabase() {
       token_hash TEXT NOT NULL UNIQUE,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       last_activity_at TEXT,
+      scope_type TEXT NOT NULL DEFAULT 'full',
+      ttl_minutes INTEGER NOT NULL DEFAULT 120,
       expires_at TEXT NOT NULL,
       revoked_at TEXT,
       FOREIGN KEY(user_id) REFERENCES users(id),
@@ -386,6 +388,18 @@ function migrateGatewayActivityTracking(database) {
     SET last_activity_at = COALESCE(last_activity_at, handshake_at, created_at)
     WHERE last_activity_at IS NULL
   `);
+
+  if (!gatewayColumns.includes("scope_type")) {
+    database.exec(
+      "ALTER TABLE claw_gateways ADD COLUMN scope_type TEXT NOT NULL DEFAULT 'full'"
+    );
+  }
+
+  if (!gatewayColumns.includes("ttl_minutes")) {
+    database.exec(
+      `ALTER TABLE claw_gateways ADD COLUMN ttl_minutes INTEGER NOT NULL DEFAULT ${CLAW_GATEWAY_TTL_MINUTES}`
+    );
+  }
 }
 
 function createPagePublicId() {
@@ -940,24 +954,33 @@ function getProposals(parentPageId, voterClawId = null) {
   }));
 }
 
-function getProposalSummary(parentPageId) {
+function getProposalSummary(parentPageId, viewerClawId = null) {
   const summary = db
     .prepare(
       `
       SELECT
         COUNT(DISTINCT proposals.author_claw_id) AS clawCount,
-        COUNT(proposal_votes.id) AS totalVotes
+        COUNT(proposal_votes.id) AS totalVotes,
+        COUNT(DISTINCT CASE
+          WHEN proposals.author_claw_id = @viewerClawId THEN proposals.id
+        END) AS viewerProposalCount,
+        COUNT(DISTINCT CASE
+          WHEN proposal_votes.claw_id = @viewerClawId THEN proposal_votes.id
+        END) AS viewerVoteCount
       FROM proposals
       LEFT JOIN proposal_votes
         ON proposal_votes.proposal_id = proposals.id
-      WHERE proposals.parent_page_id = ?
+      WHERE proposals.parent_page_id = @parentPageId
       `
     )
-    .get(parentPageId);
+    .get({ parentPageId, viewerClawId });
 
   return {
     clawCount: summary?.clawCount || 0,
-    totalVotes: summary?.totalVotes || 0
+    totalVotes: summary?.totalVotes || 0,
+    viewerActed: Boolean((summary?.viewerProposalCount || 0) + (summary?.viewerVoteCount || 0)),
+    viewerProposalCount: summary?.viewerProposalCount || 0,
+    viewerVoteCount: summary?.viewerVoteCount || 0
   };
 }
 
@@ -1067,7 +1090,7 @@ function getPageState(pageId, voterClawId = null, includeProposalDetails = false
       totalHumanPlayerCount,
       title: loaded.page.title
     },
-    proposalSummary: getProposalSummary(loaded.page.dbId),
+    proposalSummary: getProposalSummary(loaded.page.dbId, voterClawId),
     proposals: includeProposalDetails
       ? getProposals(loaded.page.dbId, voterClawId)
       : [],
@@ -1199,7 +1222,14 @@ function revokeOldestActiveGateway(userId) {
   ).run(row.id);
 }
 
-function issueClawGateway({ gatewayId, pageId, tokenHash, userId }) {
+function issueClawGateway({
+  gatewayId,
+  pageId,
+  scopeType = "full",
+  tokenHash,
+  ttlMinutes = CLAW_GATEWAY_TTL_MINUTES,
+  userId
+}) {
   const resolvedPageId = resolvePageId(pageId);
 
   if (!resolvedPageId) {
@@ -1224,7 +1254,7 @@ function issueClawGateway({ gatewayId, pageId, tokenHash, userId }) {
     revokeOldestActiveGateway(userId);
   }
 
-  const expiresAt = new Date(Date.now() + CLAW_GATEWAY_TTL_MINUTES * 60 * 1000);
+  const expiresAt = new Date(Date.now() + ttlMinutes * 60 * 1000);
 
   db.prepare(
     `
@@ -1235,9 +1265,11 @@ function issueClawGateway({ gatewayId, pageId, tokenHash, userId }) {
       current_page_id,
       token_hash,
       last_activity_at,
+      scope_type,
+      ttl_minutes,
       expires_at
     )
-    VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
+    VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?)
     `
   ).run(
     gatewayId,
@@ -1245,13 +1277,17 @@ function issueClawGateway({ gatewayId, pageId, tokenHash, userId }) {
     resolvedPageId,
     resolvedPageId,
     tokenHash,
+    scopeType,
+    ttlMinutes,
     expiresAt.toISOString()
   );
 
   return {
     expiresAt,
     gatewayId,
-    pageId
+    pageId,
+    scopeType,
+    ttlMinutes
   };
 }
 
@@ -1272,6 +1308,8 @@ function listActiveGatewaysForUser(userId) {
             CAST(strftime('%s', COALESCE(claw_gateways.last_activity_at, claw_gateways.created_at)) AS INTEGER)
         ) AS idleSeconds,
         claw_gateways.expires_at AS expiresAt,
+        claw_gateways.scope_type AS scopeType,
+        claw_gateways.ttl_minutes AS ttlMinutes,
         story_pages.title AS pageTitle,
         claw_gateways.claw_name AS clawName,
         claw_gateways.handshake_at AS handshakeAt,
@@ -1327,6 +1365,8 @@ function findGatewayByTokenHash(tokenHash) {
               CAST(strftime('%s', COALESCE(claw_gateways.last_activity_at, claw_gateways.created_at)) AS INTEGER)
           ) AS idleSeconds,
           claw_gateways.expires_at AS expiresAt,
+          claw_gateways.scope_type AS scopeType,
+          claw_gateways.ttl_minutes AS ttlMinutes,
           claw_gateways.revoked_at AS revokedAt,
           claw_gateways.claw_name AS clawName,
           claw_gateways.handshake_at AS handshakeAt,
@@ -1368,6 +1408,8 @@ function getLatestActiveGatewayForUser(userId) {
               CAST(strftime('%s', COALESCE(claw_gateways.last_activity_at, claw_gateways.created_at)) AS INTEGER)
           ) AS idleSeconds,
           claw_gateways.expires_at AS expiresAt,
+          claw_gateways.scope_type AS scopeType,
+          claw_gateways.ttl_minutes AS ttlMinutes,
           claw_gateways.claw_name AS clawName,
           claw_gateways.handshake_at AS handshakeAt
         FROM claw_gateways
@@ -1408,6 +1450,8 @@ function getLatestReadyGatewayForUser(userId) {
               CAST(strftime('%s', COALESCE(claw_gateways.last_activity_at, claw_gateways.created_at)) AS INTEGER)
           ) AS idleSeconds,
           claw_gateways.expires_at AS expiresAt,
+          claw_gateways.scope_type AS scopeType,
+          claw_gateways.ttl_minutes AS ttlMinutes,
           claw_gateways.claw_name AS clawName,
           claw_gateways.handshake_at AS handshakeAt
         FROM claw_gateways
@@ -1639,6 +1683,24 @@ function getGatewayActivity(gatewayId) {
     const rightTime = new Date(right.createdAt).getTime();
     return rightTime - leftTime;
   });
+}
+
+function getProposalParentPageId(proposalId) {
+  const row = db
+    .prepare(
+      `
+      SELECT
+        story_pages.public_id AS parentPageId
+      FROM proposals
+      INNER JOIN story_pages
+        ON story_pages.id = proposals.parent_page_id
+      WHERE proposals.id = ?
+      LIMIT 1
+      `
+    )
+    .get(proposalId);
+
+  return row ? row.parentPageId : null;
 }
 
 function listClawsForUser(userId) {
@@ -2058,6 +2120,7 @@ module.exports = {
   deleteSession,
   findClawForAuth,
   findOptionTargetForPage,
+  getProposalParentPageId,
   findPageIdByPublicId,
   findGatewayByTokenHash,
   getPageState,

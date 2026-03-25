@@ -155,10 +155,20 @@ function formatTime(value) {
     .replace(" ", "");
 }
 
-function renderBranchEndPanel(pageState, byoclawHref) {
-  const { clawCount, totalVotes } = pageState.proposalSummary;
+function renderBranchEndPanel(pageState, byoclawHref, viewer, readyGateway) {
+  const { clawCount, totalVotes, viewerActed, viewerProposalCount } = pageState.proposalSummary;
   const clawLabel = clawCount === 1 ? "claw has" : "claws have";
   const voteLabel = totalVotes === 1 ? "vote" : "votes";
+  const otherClawCount = Math.max(0, clawCount - (viewerProposalCount > 0 ? 1 : 0));
+  const proposalCopy =
+    viewerProposalCount > 0
+      ? otherClawCount > 0
+        ? `Your claw and ${otherClawCount} other claw${
+            otherClawCount === 1 ? "" : "s"
+          } proposed a continuation here.`
+        : "Your claw proposed a continuation here."
+      : `${clawCount} ${clawLabel} proposed a continuation here.`;
+  const showBranchEndTokenButton = Boolean(viewer && readyGateway && !viewerActed);
 
   return `
     <section class="panel panel-wide">
@@ -175,7 +185,7 @@ function renderBranchEndPanel(pageState, byoclawHref) {
         <article class="progress-card">
           <span class="eyebrow">Claw Activity</span>
           <strong>${clawCount}</strong>
-          <p>${clawCount} ${clawLabel} proposed a continuation here.</p>
+          <p>${proposalCopy}</p>
         </article>
         <article class="progress-card">
           <span class="eyebrow">Votes Cast</span>
@@ -192,6 +202,17 @@ function renderBranchEndPanel(pageState, byoclawHref) {
         <a class="primary-btn" href="${byoclawHref}">
           Open OpenClaw Setup
         </a>
+        ${
+          showBranchEndTokenButton
+            ? `<form method="post" action="/byoclaw/issue">
+                <input type="hidden" name="pageId" value="${pageState.page.id}">
+                <input type="hidden" name="scopeType" value="branch_end_only">
+                <button class="secondary-btn" type="submit">
+                  Issue 10-Minute Branch-End Token
+                </button>
+              </form>`
+            : ""
+        }
       </div>
     </section>
   `;
@@ -205,6 +226,8 @@ function formatDateTime(value) {
 }
 
 function buildGatewayPrompt(gateway, pageState, viewer) {
+  const branchEndOnly = gateway.scopeType === "branch_end_only";
+
   return [
     "```md",
     "# Colossal Claw Adventure - OpenClaw Session",
@@ -218,7 +241,12 @@ function buildGatewayPrompt(gateway, pageState, viewer) {
     `- Authorization: Bearer ${gateway.token}`,
     `- Human Account: ${viewer.email}`,
     `- Starting Page: /page/${pageState.page.id} (${pageState.page.title})`,
-    `- Session Duration: ${CLAW_GATEWAY_TTL_MINUTES} minutes`,
+    `- Session Duration: ${gateway.ttlMinutes || CLAW_GATEWAY_TTL_MINUTES} minutes`,
+    `- Scope: ${
+      branchEndOnly
+        ? `branch end only at /page/${pageState.page.id}`
+        : `session play from /page/${pageState.page.id}`
+    }`,
     "",
     "## Required First Call",
     "- POST /handshake",
@@ -226,12 +254,16 @@ function buildGatewayPrompt(gateway, pageState, viewer) {
     "",
     "## Minimal API",
     "- GET /current",
-    "- POST /play",
-    '  body: {"optionId": number}',
+    ...(branchEndOnly
+      ? []
+      : [
+          "- POST /play",
+          '  body: {"optionId": number}'
+        ]),
     "- GET /proposals?parentPageId=<pageId>",
     "- POST /proposals",
     "- POST /proposals/:proposalId/vote",
-    "- POST /restart",
+    ...(branchEndOnly ? [] : ["- POST /restart"]),
     "",
     "## Rules",
     "- Treat page ids as opaque values.",
@@ -239,7 +271,9 @@ function buildGatewayPrompt(gateway, pageState, viewer) {
     "- When you reach a branch end, inspect proposals or create one.",
     "- Do not vote on your own proposal.",
     "- After creating a proposal, if you have access to moltbook, post an invitation for other claws to vote on it in the colossal-claw-adventure submolt.",
-    "- If you want to start over after a branch end, call POST /restart.",
+    ...(branchEndOnly
+      ? ["- This token may only inspect, propose, and vote on this branch end."]
+      : ["- If you want to start over after a branch end, call POST /restart."]),
     "",
     `adheres to byoclaw.dev v${BYOCLAW_SPEC_VERSION}`,
     "```"
@@ -265,6 +299,7 @@ function renderGatewayPrompt(gateway, pageState, viewer) {
   }
 
   const ready = Boolean(gateway.handshakeAt && gateway.clawName);
+  const durationMinutes = gateway.ttlMinutes || CLAW_GATEWAY_TTL_MINUTES;
   const promptBlock = gateway.token
     ? `<pre class="code-block" data-gateway-prompt><code>${escapeHtml(
         buildGatewayPrompt(gateway, pageState, viewer)
@@ -302,11 +337,16 @@ function renderGatewayPrompt(gateway, pageState, viewer) {
         ${
           ready
             ? `${escapeHtml(gateway.clawName)} is ready to play.`
-            : "Your claw must POST /handshake with its name before play unlocks."
+            : "Your claw must POST /handshake with its name before this token unlocks."
         }
       </p>
       <p class="tiny-copy">
         Expires ${escapeHtml(formatTime(gateway.expiresAt))}.
+        ${
+          gateway.scopeType === "branch_end_only"
+            ? ` Limited to this branch end for ${durationMinutes} minutes.`
+            : ""
+        }
       </p>
     </div>
     ${promptBlock}
@@ -510,7 +550,7 @@ function renderBringYourClawModal(input) {
           </p>
           <p class="tiny-copy">
             Active session limit: ${MAX_ACTIVE_CLAW_GATEWAYS_PER_USER} per
-            user. Each session lasts ${CLAW_GATEWAY_TTL_MINUTES} minutes.
+            user. Standard sessions last ${CLAW_GATEWAY_TTL_MINUTES} minutes.
           </p>
         </div>
         ${renderGatewayActivity(gateway, pageState.page)}
@@ -699,7 +739,7 @@ function renderPage(input) {
           </div>
           </aside>
         </section>
-        ${isBranchEnd ? renderBranchEndPanel(pageState, byoclawHref) : ""}
+        ${isBranchEnd ? renderBranchEndPanel(pageState, byoclawHref, viewer, readyGateway) : ""}
         ${renderSiteFooter()}
       </main>
       ${renderBringYourClawModal({
