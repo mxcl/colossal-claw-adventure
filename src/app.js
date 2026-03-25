@@ -648,6 +648,7 @@ function createApp() {
     const pageId = parsePageId(req.body.pageId) || getRootPagePublicId();
     const email = normalizeText(req.body.email).toLowerCase();
     const password = req.body.password || "";
+    const confirmPassword = req.body.confirmPassword || "";
     const returnTo = req.body.returnTo || formatPath(pageId);
 
     if (!emailLooksValid(email)) {
@@ -662,6 +663,15 @@ function createApp() {
     if (password.length < 8) {
       renderStoryResponse(req, res, pageId, {
         authError: "Use a password with at least 8 characters.",
+        modalOpen: true,
+        statusCode: 400
+      });
+      return;
+    }
+
+    if (password !== confirmPassword) {
+      renderStoryResponse(req, res, pageId, {
+        authError: "Passwords do not match.",
         modalOpen: true,
         statusCode: 400
       });

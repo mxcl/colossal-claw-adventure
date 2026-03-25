@@ -619,6 +619,15 @@ function renderBringYourClawModal(input) {
             Password
             <input name="password" type="password" minlength="8" required>
           </label>
+          <label>
+            Confirm Password
+            <input
+              name="confirmPassword"
+              type="password"
+              minlength="8"
+              required
+            >
+          </label>
           <button class="secondary-btn" type="submit">Create Account</button>
         </form>
       </section>
