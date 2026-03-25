@@ -285,17 +285,28 @@ function renderStoryResponse(req, res, pageId, input = {}) {
   const viewer = req.viewer;
   const pageState = getPageState(pageId, null, false);
   const modalOpen = input.modalOpen || req.query.byoclaw === "1";
+  const gateways = viewer ? listActiveGatewaysForUser(viewer.id) : [];
   const latestGateway = viewer ? getLatestActiveGatewayForUser(viewer.id) : null;
   const shouldIssueGateway =
     viewer &&
     modalOpen &&
     !input.gateway &&
     (input.issueGateway || (req.query.issue === "1" && !latestGateway));
-  const gateway = shouldIssueGateway
+  let gateway = shouldIssueGateway
     ? buildGatewayDetails(pageState.page.id, viewer.id)
     : input.gateway || latestGateway;
+  if (gateway) {
+    const gatewayDetails = gateways.find(
+      (activeGateway) => activeGateway.gatewayId === gateway.gatewayId
+    );
+
+    gateway = gatewayDetails ? { ...gatewayDetails, ...gateway } : gateway;
+    gateway.pageTitle = gateway.pageTitle || pageState.page.title;
+    gateway.currentPageTitle =
+      gateway.currentPageTitle ||
+      (gateway.currentPageId === pageState.page.id ? pageState.page.title : "");
+  }
   const readyGateway = viewer ? getLatestReadyGatewayForUser(viewer.id) : null;
-  const gateways = viewer ? listActiveGatewaysForUser(viewer.id) : [];
   const html = renderPage({
     modal: {
       authError: input.authError || "",

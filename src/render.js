@@ -96,13 +96,27 @@ function renderSiteFooter(footerClass = "site-footer", extraLinks = "") {
   `;
 }
 
+function fakeClawVisitPercent(pageId, humanVisitPercent) {
+  const basis = String(pageId || "");
+  let hash = 0;
+
+  for (const char of basis) {
+    hash = (hash * 31 + char.charCodeAt(0)) % 997;
+  }
+
+  const floor = Math.max(7, Math.min(humanVisitPercent || 0, 92) - 28);
+  const ceiling = Math.max(floor, Math.min(96, (humanVisitPercent || 0) + 12));
+
+  return floor + (hash % (ceiling - floor + 1));
+}
+
 function renderStoryOptions(pageState, viewer, readyGateway, byoclawHref) {
   if (!pageState.options.length) {
     return "";
   }
 
   const helperCopy = readyGateway
-    ? `OpenClaw ${escapeHtml(readyGateway.clawName)} is ready.`
+    ? "Your claw can choose a route now."
     : viewer
       ? "Finish your OpenClaw handshake before choosing a route."
       : "Viewing is public. Choosing a route requires sign-in and OpenClaw.";
@@ -333,6 +347,42 @@ function renderActiveGateway(gateway) {
   `;
 }
 
+function renderGatewayActivity(gateway, currentPage) {
+  if (!gateway) {
+    return "";
+  }
+
+  const ready = Boolean(gateway.handshakeAt && gateway.clawName);
+  const currentTitle = gateway.currentPageTitle || currentPage.title;
+  const moved = gateway.currentPageId && gateway.pageId !== gateway.currentPageId;
+  const movementCopy = moved
+    ? `${escapeHtml(gateway.clawName || "This claw")} moved from ${escapeHtml(
+        gateway.pageTitle || currentPage.title
+      )} to ${escapeHtml(currentTitle)}.`
+    : ready
+      ? `${escapeHtml(gateway.clawName || "This claw")} has not advanced beyond ` +
+        "its starting page yet."
+      : "No claw actions are recorded yet because the handshake is still pending.";
+
+  return `
+    <div class="spec-card">
+      <span class="eyebrow">Claw Activity</span>
+      <p>${movementCopy}</p>
+      <p class="tiny-copy">
+        ${
+          ready
+            ? `Handshake completed ${escapeHtml(formatDateTime(gateway.handshakeAt))}.`
+            : "Waiting for the claw to send its name."
+        }
+      </p>
+      <p class="tiny-copy">
+        Current page:
+        <strong>${escapeHtml(currentTitle)}</strong>
+      </p>
+    </div>
+  `;
+}
+
 function renderBringYourClawModal(input) {
   const {
     authError,
@@ -420,6 +470,7 @@ function renderBringYourClawModal(input) {
             user. Each session lasts ${CLAW_GATEWAY_TTL_MINUTES} minutes.
           </p>
         </div>
+        ${renderGatewayActivity(gateway, pageState.page)}
         ${renderGatewayPrompt(gateway, pageState, viewer)}
       </section>
       <section class="auth-card auth-card-wide">
@@ -484,6 +535,10 @@ function renderPage(input) {
   const currentPath = formatPath(pageState.page.id);
   const isBranchEnd = pageState.options.length === 0;
   const byoclawHref = viewer ? `${currentPath}?byoclaw=1` : `${currentPath}?byoclaw=1`;
+  const fakeClawPercent = fakeClawVisitPercent(
+    pageState.page.id,
+    pageState.page.humanVisitPercent
+  );
   const statusTitle = readyGateway
     ? `${escapeHtml(readyGateway.clawName)} is ready`
     : viewer
@@ -521,7 +576,7 @@ function renderPage(input) {
           <div>
             <p class="brand-mark">COLOSSAL CLAW ADVENTURE</p>
             <p class="lede" style="margin-top: -0.5em;">
-              Public reading. Authenticated play. OpenClaw required.
+              A massively branching story for humans and their claws.
             </p>
             ${renderHeroTitle(pageState.page.title)}
           </div>
@@ -556,8 +611,40 @@ function renderPage(input) {
             </div>
           </article>
           <aside class="panel side-panel">
+            <span class="eyebrow">Traffic</span>
+            <h2>Who has been here</h2>
+            <p>
+              <strong>${pageState.page.humanVisitorCount}</strong>
+              ${
+                pageState.page.humanVisitorCount === 1
+                  ? "human player has"
+                  : "human players have"
+              }
+              reached this page.
+            </p>
+            <p>
+              <strong>${pageState.page.globalHumanVisitPercent}%</strong>
+              of all human players have been to this page.
+            </p>
+            ${
+              pageState.page.parentPageId
+                ? `<p>
+                    <strong>${pageState.page.humanVisitPercent}%</strong>
+                    of players who reached the previous page took this branch.
+                  </p>`
+                : ""
+            }
+            <p>
+              <strong>${fakeClawPercent}% of claws</strong> passed through this
+              route.
+            </p>
+          </aside>
+        </section>
+        <section class="panel panel-wide">
+          <div class="panel-head">
             <span class="eyebrow">Play Status</span>
             <h2>${statusTitle}</h2>
+          </div>
             <p>${statusCopy}</p>
             <p>
               Humans may view <code>/page/:id</code> without signing in. Route
@@ -568,7 +655,6 @@ function renderPage(input) {
                 ${viewer ? "Open Claw Session" : "Authenticate To Play"}
               </a>
             </div>
-          </aside>
         </section>
         ${renderStoryOptions(pageState, viewer, readyGateway, byoclawHref)}
         ${isBranchEnd ? renderBranchEndPanel(pageState, byoclawHref) : ""}
