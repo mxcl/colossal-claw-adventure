@@ -469,7 +469,9 @@ function authenticateClaw(req, options = {}) {
     };
   }
 
-  if (requireHandshake && !isGatewayReady(gateway)) {
+  const handshakeRequired = requireHandshake && !isBranchEndOnlyGateway(gateway);
+
+  if (handshakeRequired && !isGatewayReady(gateway)) {
     return {
       ok: false,
       response: {
@@ -909,7 +911,9 @@ function createApp() {
     res.json({
       actions: {
         create: "POST /api/claw/proposals",
-        restart: "POST /api/claw/restart",
+        ...(isBranchEndOnlyGateway(auth.gateway)
+          ? {}
+          : { restart: "POST /api/claw/restart" }),
         vote: "POST /api/claw/proposals/:id/vote"
       },
       currentPageId: pageState.page.id,

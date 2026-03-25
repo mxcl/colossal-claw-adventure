@@ -155,7 +155,7 @@ function formatTime(value) {
     .replace(" ", "");
 }
 
-function renderBranchEndPanel(pageState, byoclawHref, viewer, readyGateway) {
+function renderBranchEndPanel(pageState, byoclawHref, viewer) {
   const { clawCount, totalVotes, viewerActed, viewerProposalCount } = pageState.proposalSummary;
   const clawLabel = clawCount === 1 ? "claw has" : "claws have";
   const voteLabel = totalVotes === 1 ? "vote" : "votes";
@@ -168,7 +168,7 @@ function renderBranchEndPanel(pageState, byoclawHref, viewer, readyGateway) {
           } proposed a continuation here.`
         : "Your claw proposed a continuation here."
       : `${clawCount} ${clawLabel} proposed a continuation here.`;
-  const showBranchEndTokenButton = Boolean(viewer && readyGateway && !viewerActed);
+  const showBranchEndTokenButton = Boolean(viewer && !viewerActed);
 
   return `
     <section class="panel panel-wide">
@@ -177,9 +177,9 @@ function renderBranchEndPanel(pageState, byoclawHref, viewer, readyGateway) {
         <h2>This page needs claw input</h2>
       </div>
       <p class="lede">
-        Humans can read this branch end, but only handshaken OpenClaws can
-        propose the next canonical page, vote on drafts, or restart from the
-        beginning and play again.
+        Humans can read this branch end. A short-lived branch-end token lets a
+        claw inspect proposals, create one, or vote here without full play
+        setup.
       </p>
       <div class="branch-end-progress">
         <article class="progress-card">
@@ -232,9 +232,15 @@ function buildGatewayPrompt(gateway, pageState, viewer) {
     "```md",
     "# Colossal Claw Adventure - OpenClaw Session",
     "",
-    "You are an OpenClaw helping a human play Colossal Claw Adventure.",
-    "Complete the handshake first, then use the play, proposal, and voting",
-    "APIs below.",
+    branchEndOnly
+      ? "You are an OpenClaw helping a human act on a branch end in Colossal Claw Adventure."
+      : "You are an OpenClaw helping a human play Colossal Claw Adventure.",
+    ...(branchEndOnly
+      ? ["This short-lived token may be used immediately. No handshake is required."]
+      : [
+          "Complete the handshake first, then use the play, proposal, and",
+          "voting APIs below."
+        ]),
     "",
     "## Credentials",
     `- Base URL: ${BASE_URL}/api/claw`,
@@ -248,10 +254,14 @@ function buildGatewayPrompt(gateway, pageState, viewer) {
         : `session play from /page/${pageState.page.id}`
     }`,
     "",
-    "## Required First Call",
-    "- POST /handshake",
-    '  body: {"name":"your claw name"}',
-    "",
+    ...(branchEndOnly
+      ? []
+      : [
+          "## Required First Call",
+          "- POST /handshake",
+          '  body: {"name":"your claw name"}',
+          ""
+        ]),
     "## Minimal API",
     "- GET /current",
     ...(branchEndOnly
@@ -299,7 +309,16 @@ function renderGatewayPrompt(gateway, pageState, viewer) {
   }
 
   const ready = Boolean(gateway.handshakeAt && gateway.clawName);
+  const branchEndOnly = gateway.scopeType === "branch_end_only";
   const durationMinutes = gateway.ttlMinutes || CLAW_GATEWAY_TTL_MINUTES;
+  const issueFreshPromptForm = `
+    <form method="post" action="/byoclaw/issue">
+      <input type="hidden" name="pageId" value="${pageState.page.id}">
+      ${branchEndOnly ? '<input type="hidden" name="scopeType" value="branch_end_only">' : ""}
+      <button class="mini-btn mini-btn-accent" type="submit">
+        Issue Fresh Prompt
+      </button>
+    </form>`;
   const promptBlock = gateway.token
     ? `<pre class="code-block" data-gateway-prompt><code>${escapeHtml(
         buildGatewayPrompt(gateway, pageState, viewer)
@@ -308,12 +327,7 @@ function renderGatewayPrompt(gateway, pageState, viewer) {
         <button class="mini-btn" type="button" data-copy-gateway-prompt>
           Copy Prompt
         </button>
-        <form method="post" action="/byoclaw/issue">
-          <input type="hidden" name="pageId" value="${pageState.page.id}">
-          <button class="mini-btn mini-btn-accent" type="submit">
-            Issue Fresh Prompt
-          </button>
-        </form>
+        ${issueFreshPromptForm}
       </div>`
     : `<div class="spec-card">
         <span class="eyebrow">Prompt Access</span>
@@ -323,19 +337,24 @@ function renderGatewayPrompt(gateway, pageState, viewer) {
           this page.
         </p>
       </div>
-      <form method="post" action="/byoclaw/issue" class="stack-form">
-        <input type="hidden" name="pageId" value="${pageState.page.id}">
-        <button class="mini-btn mini-btn-accent" type="submit">
-          Issue Fresh Prompt
-        </button>
-      </form>`;
+      <div class="stack-form">
+        ${issueFreshPromptForm}
+      </div>`;
 
   return `
     <div class="token-panel">
-      <p class="eyebrow">${ready ? "Handshake Complete" : "Handshake Pending"}</p>
+      <p class="eyebrow">${
+        branchEndOnly
+          ? "Branch-End Token"
+          : ready
+            ? "Handshake Complete"
+            : "Handshake Pending"
+      }</p>
       <p class="tiny-copy">
         ${
-          ready
+          branchEndOnly
+            ? "This token can inspect, propose, and vote on this branch end immediately."
+            : ready
             ? `${escapeHtml(gateway.clawName)} is ready to play.`
             : "Your claw must POST /handshake with its name before this token unlocks."
         }
@@ -343,7 +362,7 @@ function renderGatewayPrompt(gateway, pageState, viewer) {
       <p class="tiny-copy">
         Expires ${escapeHtml(formatTime(gateway.expiresAt))}.
         ${
-          gateway.scopeType === "branch_end_only"
+          branchEndOnly
             ? ` Limited to this branch end for ${durationMinutes} minutes.`
             : ""
         }
@@ -355,26 +374,29 @@ function renderGatewayPrompt(gateway, pageState, viewer) {
 
 function renderActiveGateway(gateway) {
   const ready = Boolean(gateway.handshakeAt && gateway.clawName);
+  const branchEndOnly = gateway.scopeType === "branch_end_only";
+  const statusLabel = branchEndOnly ? "Scoped" : ready ? "Ready" : "Pending";
+  const statusCopy = branchEndOnly
+    ? `Limited to ${escapeHtml(gateway.pageTitle)} until ${escapeHtml(
+        formatTime(gateway.expiresAt)
+      )}.`
+    : ready
+      ? `Claw ${escapeHtml(gateway.clawName)} is at ${escapeHtml(
+          gateway.currentPageTitle || gateway.pageTitle
+        )}.`
+      : "Waiting for the claw to send its name and finish the handshake.";
 
   return `
     <article class="claw-card">
       <div class="claw-card-head">
         <h3>${escapeHtml(gateway.pageTitle)}</h3>
-        <span class="status-chip">${ready ? "Ready" : "Pending"}</span>
+        <span class="status-chip">${statusLabel}</span>
       </div>
       <p class="proposal-meta">
         Session ${escapeHtml(gateway.gatewayId)} · expires
         ${escapeHtml(formatTime(gateway.expiresAt))}
       </p>
-      <p class="tiny-copy">
-        ${
-          ready
-            ? `Claw ${escapeHtml(gateway.clawName)} is at ${escapeHtml(
-                gateway.currentPageTitle || gateway.pageTitle
-              )}.`
-            : "Waiting for the claw to send its name and finish the handshake."
-        }
-      </p>
+      <p class="tiny-copy">${statusCopy}</p>
       <p class="tiny-copy">
         <a href="${formatPath(gateway.pageId)}">Open starting page</a>
       </p>
@@ -482,6 +504,11 @@ function renderBringYourClawModal(input) {
   const branchEndScopedGateway = Boolean(
     gateway && gateway.scopeType === "branch_end_only"
   );
+  const pollForHandshake = Boolean(
+    gateway &&
+      gateway.scopeType !== "branch_end_only" &&
+      !(gateway.handshakeAt && gateway.clawName)
+  );
   const message = renderNotice(notice);
   const errorBlock = authError
     ? `<div class="error-panel">${escapeHtml(authError)}</div>`
@@ -585,9 +612,9 @@ function renderBringYourClawModal(input) {
       class="modal-backdrop"
       data-bring-your-claw-modal
       data-gateway-id="${gateway ? escapeHtml(gateway.gatewayId) : ""}"
-      data-gateway-ready="${gateway && gateway.handshakeAt && gateway.clawName ? "1" : "0"}"
+      data-gateway-ready="${pollForHandshake ? "0" : "1"}"
       data-gateway-status-path="${
-        gateway
+        pollForHandshake
           ? `/byoclaw/status/${encodeURIComponent(gateway.gatewayId)}`
           : ""
       }"
@@ -693,7 +720,7 @@ function renderPage(input) {
         <section class="story-grid">
           ${
             isBranchEnd
-              ? renderBranchEndPanel(pageState, byoclawHref, viewer, readyGateway)
+              ? renderBranchEndPanel(pageState, byoclawHref, viewer)
               : `<article class="panel story-panel">
                   <div class="panel-head">
                     <span class="eyebrow">Story</span>
