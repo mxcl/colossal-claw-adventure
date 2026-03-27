@@ -114,6 +114,7 @@ textarea {
 }
 
 .landing-copy,
+.landing-rail,
 .landing-poster {
   position: relative;
   min-width: 0;
@@ -183,6 +184,11 @@ html[data-has-saved-story="1"] .landing-actions [data-landing-begin] {
 html[data-has-saved-story="1"] .landing-actions [data-landing-continue],
 html[data-has-saved-story="1"] .landing-actions [data-landing-restart] {
   display: inline-flex;
+}
+
+.landing-rail {
+  display: grid;
+  gap: 0;
 }
 
 .landing-poster {
@@ -938,6 +944,10 @@ html[data-has-saved-story="1"] .landing-actions [data-landing-restart] {
     padding-top: 0;
   }
 
+  .landing-rail {
+    gap: 0;
+  }
+
   .landing-poster-panel {
     width: min(320px, 92%);
   }
@@ -958,5 +968,15 @@ html[data-has-saved-story="1"] .landing-actions [data-landing-restart] {
 
   .branch-end-restart-panel {
     width: 100%;
+  }
+}
+
+@media (min-width: 901px) {
+  .landing-rail {
+    position: sticky;
+    top: 0;
+    align-self: start;
+    align-content: end;
+    min-height: calc(100vh - 3.5rem);
   }
 }

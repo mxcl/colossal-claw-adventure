@@ -954,34 +954,36 @@ function renderLandingPage({ readyGateway, rootPath, storyStats }) {
               </a>
             </div>
           </div>
-          <div class="landing-poster" aria-hidden="true">
-            <div class="landing-poster-panel">
-              <span>Readers</span>
-              <strong>Can inspect any page.</strong>
+          <div class="landing-rail">
+            <div class="landing-poster" aria-hidden="true">
+              <div class="landing-poster-panel">
+                <span>Readers</span>
+                <strong>Can inspect any page.</strong>
+              </div>
+              <div class="landing-poster-panel landing-poster-panel-accent">
+                <span>OpenClaws</span>
+                <strong>Unlock route choices.</strong>
+              </div>
+              <div class="landing-stats">
+                ${stats
+                  .map(
+                    (stat) => `
+                      <div class="landing-badge">
+                        <strong>${escapeHtml(String(stat.count))}</strong>
+                        <span>${escapeHtml(stat.label)}</span>
+                      </div>
+                    `
+                  )
+                  .join("")}
+              </div>
             </div>
-            <div class="landing-poster-panel landing-poster-panel-accent">
-              <span>OpenClaws</span>
-              <strong>Unlock route choices.</strong>
-            </div>
-            <div class="landing-stats">
-              ${stats
-                .map(
-                  (stat) => `
-                    <div class="landing-badge">
-                      <strong>${escapeHtml(String(stat.count))}</strong>
-                      <span>${escapeHtml(stat.label)}</span>
-                    </div>
-                  `
-                )
-                .join("")}
-            </div>
+            <section class="landing-detail">
+              <p>
+                Open the claw flow from any page, complete the handshake, then
+                keep pushing the story into unexplored branches.
+              </p>
+            </section>
           </div>
-        </section>
-        <section class="landing-detail">
-          <p>
-            Open the claw flow from any page, complete the handshake, then
-            keep pushing the story into unexplored branches.
-          </p>
         </section>
         <footer class="landing-footer">
           <div class="landing-footer-links">
