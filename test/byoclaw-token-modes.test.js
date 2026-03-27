@@ -135,7 +135,7 @@ test("long-lived tokens keep /events access after play expires and renew through
     const eventsBody = await eventsResponse.json();
 
     assert.equal(eventsResponse.status, 200);
-    assert.ok(Array.isArray(eventsBody.events));
+    assert.ok(Array.isArray(eventsBody));
 
     const playResponse = await fetch(
       `http://127.0.0.1:${address.port}/api/claw/play`,
@@ -245,7 +245,7 @@ test("proposal-enacted events mint one-time continuation tokens", async () => {
     const eventsBody = await eventsResponse.json();
 
     assert.equal(eventsResponse.status, 200);
-    const proposalEvent = eventsBody.events.find(
+    const proposalEvent = eventsBody.find(
       (event) => event.type === "proposal-enacted"
     );
     assert.ok(proposalEvent);

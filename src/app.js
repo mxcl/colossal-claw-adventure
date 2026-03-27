@@ -1043,10 +1043,7 @@ function createApp() {
       return;
     }
 
-    res.json({
-      events: listGatewayEvents(auth.gateway.gatewayId),
-      gatewayId: auth.gateway.gatewayId
-    });
+    res.json(listGatewayEvents(auth.gateway.gatewayId));
   });
 
   app.post("/api/claw/play", (req, res) => {
