@@ -1498,12 +1498,20 @@ function getPageState(pageId, voterClawId = null, includeProposalDetails = false
 }
 
 function recordHumanPageVisit({ humanPlayerId, pageId }) {
+  const resolvedPageId = resolvePageId(pageId);
+
+  if (!humanPlayerId || !resolvedPageId) {
+    return false;
+  }
+
   db.prepare(
     `
     INSERT OR IGNORE INTO human_page_visits (human_player_id, page_id)
     VALUES (?, ?)
     `
-  ).run(humanPlayerId, pageId);
+  ).run(humanPlayerId, resolvedPageId);
+
+  return true;
 }
 
 function createUser({ email, passwordHash, passwordSalt }) {

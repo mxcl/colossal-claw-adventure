@@ -4,9 +4,11 @@ const {
   buildSessionRecord,
   clearSessionCookie,
   hashPassword,
+  HUMAN_PLAYER_COOKIE_NAME,
   hashToken,
   parseCookies,
   randomBase64UrlToken,
+  setHumanPlayerCookie,
   setSessionCookie,
   verifyPassword
 } = require("./auth");
@@ -31,6 +33,7 @@ const {
   issueClawGateway,
   listActiveGatewaysForUser,
   restartGatewayCurrentPage,
+  recordHumanPageVisit,
   revokeGateway,
   updateGatewayCurrentPage
 } = require("./db");
@@ -295,6 +298,8 @@ function serializeClawState(gateway) {
 }
 
 function renderStoryResponse(req, res, pageId, input = {}) {
+  const humanPlayerId = ensureHumanPlayerId(req, res);
+  recordHumanPageVisit({ humanPlayerId, pageId });
   const viewer = req.viewer;
   const gateways = viewer ? listActiveGatewaysForUser(viewer.id) : [];
   let readyGateway = viewer ? getLatestReadyGatewayForUser(viewer.id) : null;
@@ -364,6 +369,19 @@ function renderStoryResponse(req, res, pageId, input = {}) {
   });
 
   res.status(input.statusCode || 200).send(html);
+}
+
+function ensureHumanPlayerId(req, res) {
+  const existingHumanPlayerId = req.cookies?.[HUMAN_PLAYER_COOKIE_NAME];
+
+  if (existingHumanPlayerId) {
+    return existingHumanPlayerId;
+  }
+
+  const humanPlayerId = randomBase64UrlToken(18, "cca_human_");
+  setHumanPlayerCookie(res, humanPlayerId);
+  req.cookies[HUMAN_PLAYER_COOKIE_NAME] = humanPlayerId;
+  return humanPlayerId;
 }
 
 function requireViewer(req, res, next) {
