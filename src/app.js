@@ -2,15 +2,16 @@ const express = require("express");
 
 const {
   buildSessionRecord,
+  clearPendingGatewayCookie,
   clearSessionCookie,
-  hashPassword,
   HUMAN_PLAYER_COOKIE_NAME,
+  PENDING_GATEWAY_COOKIE_NAME,
   hashToken,
   parseCookies,
   randomBase64UrlToken,
   setHumanPlayerCookie,
-  setSessionCookie,
-  verifyPassword
+  setPendingGatewayCookie,
+  setSessionCookie
 } = require("./auth");
 const {
   castVote,
@@ -19,6 +20,7 @@ const {
   createSession,
   createUser,
   deleteSession,
+  findGatewayById,
   findGatewayByTokenHash,
   findOptionTargetForPage,
   findPageIdByPublicId,
@@ -30,7 +32,6 @@ const {
   getProposalParentPageId,
   getRootPagePublicId,
   getStoryStats,
-  getUserByEmail,
   getUserBySessionToken,
   issueClawGateway,
   listActiveGatewaysForUser,
@@ -253,6 +254,12 @@ function buildGatewayDetails(pageId, userId, options = {}) {
   };
 }
 
+function clawPasswordTokenLooksValid(passwordToken) {
+  return typeof passwordToken === "string" &&
+    passwordToken.trim().length >= 32 &&
+    passwordToken.trim().length <= 512;
+}
+
 function toPublicPage(page) {
   const { dbId, parentPageDbId, ...publicPage } = page;
   return publicPage;
@@ -304,6 +311,31 @@ function buildPostAuthRedirect(userId, returnTo) {
   }
 
   return `${returnTo}?byoclaw=1`;
+}
+
+function pendingGatewayMatchesRequest(req, gatewayId) {
+  return req.cookies?.[PENDING_GATEWAY_COOKIE_NAME] === gatewayId;
+}
+
+function getGatewayIssuingUserId(req) {
+  if (req.viewer) {
+    return req.viewer.id;
+  }
+
+  const pendingGatewayId = req.cookies?.[PENDING_GATEWAY_COOKIE_NAME];
+  if (pendingGatewayId) {
+    const gateway = findGatewayById(pendingGatewayId);
+
+    if (
+      gateway &&
+      !gateway.revokedAt &&
+      new Date(gateway.expiresAt).getTime() > Date.now()
+    ) {
+      return gateway.userId;
+    }
+  }
+
+  return createUser({});
 }
 
 function serializeClawState(gateway) {
@@ -362,12 +394,15 @@ function renderStoryResponse(req, res, pageId, input = {}) {
   );
   const modalOpen = input.modalOpen || req.query.byoclaw === "1";
   const shouldIssueGateway =
-    viewer &&
     modalOpen &&
     !input.gateway &&
-    input.issueGateway;
+    (input.issueGateway || !viewer);
   let gateway = shouldIssueGateway
-    ? buildGatewayDetails(pageState.page.id, viewer.id, input.gatewayOptions || {})
+    ? buildGatewayDetails(
+        pageState.page.id,
+        getGatewayIssuingUserId(req),
+        input.gatewayOptions || {}
+      )
     : input.gateway || (modalOpen ? latestFullGateway : null);
   if (gateway) {
     const gatewayDetails = gateways.find(
@@ -391,6 +426,11 @@ function renderStoryResponse(req, res, pageId, input = {}) {
       : readyGateway;
     readyGateway.activity = getGatewayActivity(readyGateway.gatewayId);
   }
+
+  if (!viewer && gateway) {
+    setPendingGatewayCookie(res, gateway.gatewayId, gateway.ttlMinutes * 60);
+  }
+
   const html = renderPage({
     modal: {
       authError: input.authError || "",
@@ -426,24 +466,10 @@ function requireViewer(req, res, next) {
   if (!req.viewer) {
     const pageId = parsePageId(req.body.pageId) || getRootPagePublicId();
     renderStoryResponse(req, res, pageId, {
-      authError: "Sign in first to issue an OpenClaw prompt.",
+      authError: "Let your claw sign you in before managing that session.",
       modalOpen: true,
       statusCode: 401
     });
-    return;
-  }
-
-  next();
-}
-
-function requireViewerJson(req, res, next) {
-  if (!req.viewer) {
-    clawClientError(
-      res,
-      401,
-      "AUTH_REQUIRED",
-      "Sign in first, then retry this request with the same browser session."
-    );
     return;
   }
 
@@ -556,7 +582,8 @@ function authenticateClaw(req, options = {}) {
       response: {
         error: "CLAW_HANDSHAKE_REQUIRED",
         message:
-          "Call POST /api/claw/handshake with body {\"name\":\"your claw name\"} " +
+          "Call POST /api/claw/handshake with body " +
+          "{\"name\":\"your claw name\",\"passwordToken\":\"stable-secret\"} " +
           "before using play, proposal, vote, or restart.",
         recoverable: true
       },
@@ -709,7 +736,9 @@ function createApp() {
 
     if (!req.viewer) {
       renderStoryResponse(req, res, pageId, {
-        authError: "Sign in to play. Viewing is public, but choosing a route is not.",
+        authError:
+          "Bring your claw to play. Reading is public, but route choices " +
+          "unlock only after the claw handshake lands.",
         modalOpen: true,
         statusCode: 401
       });
@@ -730,84 +759,6 @@ function createApp() {
     res.redirect(formatPath(option.targetPageId));
   });
 
-  app.post("/auth/signup", (req, res) => {
-    const pageId = parsePageId(req.body.pageId) || getRootPagePublicId();
-    const email = normalizeText(req.body.email).toLowerCase();
-    const password = req.body.password || "";
-    const confirmPassword = req.body.confirmPassword || "";
-    const returnTo = req.body.returnTo || formatPath(pageId);
-
-    if (!emailLooksValid(email)) {
-      renderStoryResponse(req, res, pageId, {
-        authError: "Enter a valid email address.",
-        modalOpen: true,
-        statusCode: 400
-      });
-      return;
-    }
-
-    if (password.length < 8) {
-      renderStoryResponse(req, res, pageId, {
-        authError: "Use a password with at least 8 characters.",
-        modalOpen: true,
-        statusCode: 400
-      });
-      return;
-    }
-
-    if (password !== confirmPassword) {
-      renderStoryResponse(req, res, pageId, {
-        authError: "Passwords do not match.",
-        modalOpen: true,
-        statusCode: 400
-      });
-      return;
-    }
-
-    if (getUserByEmail(email)) {
-      renderStoryResponse(req, res, pageId, {
-        authError: "That email already has an account. Sign in instead.",
-        modalOpen: true,
-        statusCode: 409
-      });
-      return;
-    }
-
-    const passwordData = hashPassword(password);
-    const userId = createUser({
-      email,
-      passwordHash: passwordData.hash,
-      passwordSalt: passwordData.salt
-    });
-    const session = buildSessionRecord(userId);
-
-    createSession(session);
-    setSessionCookie(res, session.token);
-    res.redirect(buildPostAuthRedirect(userId, returnTo));
-  });
-
-  app.post("/auth/signin", (req, res) => {
-    const pageId = parsePageId(req.body.pageId) || getRootPagePublicId();
-    const email = normalizeText(req.body.email).toLowerCase();
-    const password = req.body.password || "";
-    const returnTo = req.body.returnTo || formatPath(pageId);
-    const user = getUserByEmail(email);
-
-    if (!user || !verifyPassword(password, user.passwordSalt, user.passwordHash)) {
-      renderStoryResponse(req, res, pageId, {
-        authError: "Invalid email or password.",
-        modalOpen: true,
-        statusCode: 401
-      });
-      return;
-    }
-
-    const session = buildSessionRecord(user.id);
-    createSession(session);
-    setSessionCookie(res, session.token);
-    res.redirect(buildPostAuthRedirect(user.id, returnTo));
-  });
-
   app.post("/auth/signout", (req, res) => {
     const cookies = parseCookies(req.headers.cookie);
     const token =
@@ -819,10 +770,11 @@ function createApp() {
     }
 
     clearSessionCookie(res);
+    clearPendingGatewayCookie(res);
     res.redirect(req.body.returnTo || formatPath(getRootPagePublicId()));
   });
 
-  app.post("/byoclaw/issue", requireViewer, (req, res) => {
+  app.post("/byoclaw/issue", (req, res) => {
     const pageId = parsePageId(req.body.pageId) || getRootPagePublicId();
     const tokenMode =
       req.body.tokenMode === "short_play" ? "short_play" : "long_lived";
@@ -843,7 +795,7 @@ function createApp() {
   app.get("/byoclaw/renew-play/:gatewayId", (req, res) => {
     if (!req.viewer) {
       renderStoryResponse(req, res, getRootPagePublicId(), {
-        authError: "Sign in first to renew an OpenClaw play window.",
+        authError: "Let your claw sign you in before renewing a play window.",
         modalOpen: true,
         statusCode: 401
       });
@@ -908,10 +860,26 @@ function createApp() {
     });
   });
 
-  app.get("/byoclaw/status/:gatewayId", requireViewerJson, (req, res) => {
-    const gateway = listActiveGatewaysForUser(req.viewer.id).find(
-      (entry) => entry.gatewayId === req.params.gatewayId
-    );
+  app.get("/byoclaw/status/:gatewayId", (req, res) => {
+    let gateway = null;
+
+    if (req.viewer) {
+      gateway = listActiveGatewaysForUser(req.viewer.id).find(
+        (entry) => entry.gatewayId === req.params.gatewayId
+      ) || null;
+    }
+
+    if (!gateway && pendingGatewayMatchesRequest(req, req.params.gatewayId)) {
+      const pendingGateway = findGatewayById(req.params.gatewayId);
+
+      if (
+        pendingGateway &&
+        !pendingGateway.revokedAt &&
+        new Date(pendingGateway.expiresAt).getTime() > Date.now()
+      ) {
+        gateway = pendingGateway;
+      }
+    }
 
     if (!gateway) {
       clawClientError(
@@ -924,11 +892,25 @@ function createApp() {
       return;
     }
 
+    const ready = Boolean(gateway.handshakeAt && gateway.clawName);
+
+    if (
+      ready &&
+      (!req.viewer || req.viewer.id !== gateway.userId) &&
+      pendingGatewayMatchesRequest(req, gateway.gatewayId)
+    ) {
+      const session = buildSessionRecord(gateway.userId);
+
+      createSession(session);
+      setSessionCookie(res, session.token);
+      clearPendingGatewayCookie(res);
+    }
+
     res.json({
       clawName: gateway.clawName,
       gatewayId: gateway.gatewayId,
       handshakeAt: gateway.handshakeAt,
-      ready: Boolean(gateway.handshakeAt && gateway.clawName)
+      ready
     });
   });
 
@@ -967,6 +949,8 @@ function createApp() {
     }
 
     const name = normalizeText(req.body.name);
+    const passwordToken = normalizeText(req.body.passwordToken);
+    const email = normalizeText(req.body.email).toLowerCase();
     if (!textLooksValid(name, MAX_CLAW_NAME_LENGTH)) {
       clawClientError(
         res,
@@ -978,12 +962,46 @@ function createApp() {
       return;
     }
 
+    if (!clawPasswordTokenLooksValid(passwordToken)) {
+      clawClientError(
+        res,
+        400,
+        "CLAW_PASSWORD_TOKEN_INVALID",
+        "Provide body.passwordToken as a stable secret between 32 and 512 " +
+          "characters. Make it long, random, and unique to this human."
+      );
+      return;
+    }
+
+    if (email && !emailLooksValid(email)) {
+      clawClientError(
+        res,
+        400,
+        "CLAW_EMAIL_INVALID",
+        "If you send body.email, it must be a valid email address."
+      );
+      return;
+    }
+
     const completed = completeGatewayHandshake({
+      clawPasswordTokenHash: hashToken(passwordToken),
+      email: email || null,
       gatewayId: auth.gateway.gatewayId,
       name
     });
 
-    if (!completed) {
+    if (!completed.ok) {
+      if (completed.reason === "EMAIL_IN_USE") {
+        clawClientError(
+          res,
+          409,
+          "CLAW_EMAIL_CONFLICT",
+          "That email address is already attached to a different human. Retry " +
+            "the handshake without email or with the correct email."
+        );
+        return;
+      }
+
       clawClientError(
         res,
         409,

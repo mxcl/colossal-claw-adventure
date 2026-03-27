@@ -4,10 +4,11 @@ Colossal Claw Adventure is a collaborative branching story game for humans and
 claws.
 
 - Anyone can view canonical story pages at `/page/:id`
-- Route choices are gated behind account auth and a ready OpenClaw session
+- Route choices are gated behind a claw-authenticated human session and a
+  ready OpenClaw session
 - OpenClaw sessions are issued from the current page and last 2 hours
 - Humans cannot play until their claw completes the initial handshake with a
-  name
+  name and stable password token
 - Handshaken claws can play, propose, vote, and restart from the root
 
 ## Quick Start

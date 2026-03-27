@@ -191,9 +191,8 @@ function createDatabase() {
   db.exec(`
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      email TEXT NOT NULL UNIQUE,
-      password_hash TEXT NOT NULL,
-      password_salt TEXT NOT NULL,
+      email TEXT UNIQUE,
+      claw_password_token_hash TEXT UNIQUE,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -368,6 +367,7 @@ function createDatabase() {
     );
   `);
 
+  migrateUsersForClawPasswordAuth(db);
   migrateGatewayForeignKeys(db);
   migrateClawGatewaySessions(db);
   migrateGatewayActivityTracking(db);
@@ -398,6 +398,52 @@ function tableColumns(database, tableName) {
     .prepare(`PRAGMA table_info(${tableName})`)
     .all()
     .map((row) => row.name);
+}
+
+function migrateUsersForClawPasswordAuth(database) {
+  const userColumns = database.prepare("PRAGMA table_info(users)").all();
+  const emailColumn = userColumns.find((column) => column.name === "email");
+  const hasClawPasswordTokenHash = userColumns.some(
+    (column) => column.name === "claw_password_token_hash"
+  );
+  const emailAllowsNull = Boolean(emailColumn) && emailColumn.notnull === 0;
+
+  if (hasClawPasswordTokenHash && emailAllowsNull) {
+    return;
+  }
+
+  database.exec("PRAGMA foreign_keys = OFF");
+
+  const migrate = database.transaction(() => {
+    database.exec(`
+      CREATE TABLE users_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        email TEXT UNIQUE,
+        claw_password_token_hash TEXT UNIQUE,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    database.exec(`
+      INSERT INTO users_new (id, email, claw_password_token_hash, created_at)
+      SELECT
+        id,
+        email,
+        ${
+          hasClawPasswordTokenHash
+            ? "claw_password_token_hash"
+            : "NULL"
+        },
+        created_at
+      FROM users;
+    `);
+
+    database.exec("DROP TABLE users");
+    database.exec("ALTER TABLE users_new RENAME TO users");
+  });
+
+  migrate();
+  database.exec("PRAGMA foreign_keys = ON");
 }
 
 function migrateGatewayForeignKeys(database) {
@@ -1694,15 +1740,15 @@ function recordHumanPageVisit({ humanPlayerId, pageId }) {
   return true;
 }
 
-function createUser({ email, passwordHash, passwordSalt }) {
+function createUser({ clawPasswordTokenHash = null, email = null }) {
   const result = db
     .prepare(
       `
-      INSERT INTO users (email, password_hash, password_salt)
-      VALUES (?, ?, ?)
+      INSERT INTO users (email, claw_password_token_hash)
+      VALUES (?, ?)
       `
     )
-    .run(email, passwordHash, passwordSalt);
+    .run(email, clawPasswordTokenHash);
 
   return Number(result.lastInsertRowid);
 }
@@ -1715,13 +1761,30 @@ function getUserByEmail(email) {
         SELECT
           id,
           email,
-          password_hash AS passwordHash,
-          password_salt AS passwordSalt
+          claw_password_token_hash AS clawPasswordTokenHash
         FROM users
         WHERE email = ?
         `
       )
       .get(email) || null
+  );
+}
+
+function getUserByClawPasswordTokenHash(clawPasswordTokenHash) {
+  return (
+    db
+      .prepare(
+        `
+        SELECT
+          id,
+          email,
+          claw_password_token_hash AS clawPasswordTokenHash
+        FROM users
+        WHERE claw_password_token_hash = ?
+        LIMIT 1
+        `
+      )
+      .get(clawPasswordTokenHash) || null
   );
 }
 
@@ -1768,6 +1831,39 @@ function getUserBySessionToken(tokenHash) {
 
 function deleteSession(tokenHash) {
   db.prepare("DELETE FROM sessions WHERE token_hash = ?").run(tokenHash);
+}
+
+function deleteUserIfOrphaned(userId) {
+  if (!userId) {
+    return;
+  }
+
+  const hasSessions = db
+    .prepare(
+      `
+      SELECT 1
+      FROM sessions
+      WHERE user_id = ?
+      LIMIT 1
+      `
+    )
+    .get(userId);
+  const hasGateways = db
+    .prepare(
+      `
+      SELECT 1
+      FROM claw_gateways
+      WHERE user_id = ?
+      LIMIT 1
+      `
+    )
+    .get(userId);
+
+  if (hasSessions || hasGateways) {
+    return;
+  }
+
+  db.prepare("DELETE FROM users WHERE id = ?").run(userId);
 }
 
 function cleanupExpiredGateways() {
@@ -2115,6 +2211,49 @@ function findGatewayByTokenHash(tokenHash) {
   );
 }
 
+function findGatewayById(gatewayId) {
+  return (
+    db
+      .prepare(
+        `
+        SELECT
+          claw_gateways.gateway_id AS gatewayId,
+          claw_gateways.user_id AS userId,
+          story_pages.public_id AS pageId,
+          current_pages.id AS currentPageDbId,
+          current_pages.public_id AS currentPageId,
+          claw_gateways.created_at AS createdAt,
+          claw_gateways.last_activity_at AS lastActivityAt,
+          MAX(
+            0,
+            CAST(strftime('%s', 'now') AS INTEGER) -
+              CAST(strftime('%s', COALESCE(claw_gateways.last_activity_at, claw_gateways.created_at)) AS INTEGER)
+          ) AS idleSeconds,
+          claw_gateways.expires_at AS expiresAt,
+          claw_gateways.play_expires_at AS playExpiresAt,
+          claw_gateways.scope_type AS scopeType,
+          claw_gateways.ttl_minutes AS ttlMinutes,
+          claw_gateways.notification_gateway_id AS notificationGatewayId,
+          claw_gateways.identity_gateway_id AS identityGatewayId,
+          claw_gateways.revoked_at AS revokedAt,
+          claw_gateways.claw_name AS clawName,
+          claw_gateways.handshake_at AS handshakeAt,
+          users.email AS userEmail
+        FROM claw_gateways
+        INNER JOIN users
+          ON users.id = claw_gateways.user_id
+        INNER JOIN story_pages
+          ON story_pages.id = claw_gateways.page_id
+        LEFT JOIN story_pages AS current_pages
+          ON current_pages.id = claw_gateways.current_page_id
+        WHERE claw_gateways.gateway_id = ?
+        LIMIT 1
+      `
+      )
+      .get(gatewayId) || null
+  );
+}
+
 function getLatestActiveGatewayForUser(userId) {
   cleanupExpiredGateways();
 
@@ -2209,30 +2348,122 @@ function getLatestReadyGatewayForUser(userId) {
   );
 }
 
-function completeGatewayHandshake({ gatewayId, name }) {
+function completeGatewayHandshake({
+  clawPasswordTokenHash,
+  email = null,
+  gatewayId,
+  name
+}) {
   const normalizedName =
     typeof name === "string" ? name.trim().slice(0, 120) : "";
+  const normalizedEmail =
+    typeof email === "string" && email.trim()
+      ? email.trim().toLowerCase()
+      : null;
 
   if (!normalizedName) {
     throw new Error("Claw name is required.");
   }
 
-  const result = db
-    .prepare(
-      `
-      UPDATE claw_gateways
-      SET
-        claw_name = ?,
-        handshake_at = COALESCE(handshake_at, CURRENT_TIMESTAMP),
-        last_activity_at = CURRENT_TIMESTAMP
-      WHERE gateway_id = ?
-        AND revoked_at IS NULL
-        AND expires_at > ?
-      `
-    )
-    .run(normalizedName, gatewayId, new Date().toISOString());
+  if (!clawPasswordTokenHash) {
+    throw new Error("Claw password token hash is required.");
+  }
 
-  return result.changes > 0;
+  const performHandshake = db.transaction(() => {
+    const gateway = db
+      .prepare(
+        `
+        SELECT id, user_id AS userId
+        FROM claw_gateways
+        WHERE gateway_id = ?
+          AND revoked_at IS NULL
+          AND expires_at > ?
+        LIMIT 1
+      `
+      )
+      .get(gatewayId, new Date().toISOString());
+
+    if (!gateway) {
+      return {
+        ok: false,
+        reason: "HANDSHAKE_REJECTED"
+      };
+    }
+
+    const existingUser = db
+      .prepare(
+        `
+        SELECT id
+        FROM users
+        WHERE claw_password_token_hash = ?
+        LIMIT 1
+      `
+      )
+      .get(clawPasswordTokenHash);
+    const targetUserId = existingUser ? existingUser.id : gateway.userId;
+
+    try {
+      if (existingUser) {
+        if (normalizedEmail) {
+          db.prepare(
+            `
+            UPDATE users
+            SET email = ?
+            WHERE id = ?
+          `
+          ).run(normalizedEmail, existingUser.id);
+        }
+      } else {
+        db.prepare(
+          `
+          UPDATE users
+          SET
+            claw_password_token_hash = ?,
+            email = COALESCE(?, email)
+          WHERE id = ?
+        `
+        ).run(clawPasswordTokenHash, normalizedEmail, gateway.userId);
+      }
+    } catch (error) {
+      if (
+        error &&
+        error.code === "SQLITE_CONSTRAINT_UNIQUE"
+      ) {
+        return {
+          ok: false,
+          reason: "EMAIL_IN_USE"
+        };
+      }
+
+      throw error;
+    }
+
+    const result = db
+      .prepare(
+        `
+        UPDATE claw_gateways
+        SET
+          user_id = ?,
+          claw_name = ?,
+          handshake_at = COALESCE(handshake_at, CURRENT_TIMESTAMP),
+          last_activity_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `
+      )
+      .run(targetUserId, normalizedName, gateway.id);
+
+    if (gateway.userId !== targetUserId) {
+      deleteUserIfOrphaned(gateway.userId);
+    }
+
+    return {
+      ok: result.changes > 0,
+      reason: result.changes > 0 ? null : "HANDSHAKE_REJECTED",
+      userId: targetUserId
+    };
+  });
+
+  return performHandshake();
 }
 
 function renewGatewayPlayWindow({
@@ -3185,6 +3416,7 @@ module.exports = {
   createUser,
   deleteSession,
   findClawForAuth,
+  findGatewayById,
   findOptionTargetForPage,
   getProposalParentPageId,
   findPageIdByPublicId,
@@ -3198,6 +3430,7 @@ module.exports = {
   getRootPageId,
   getRootPagePublicId,
   getStoryStats,
+  getUserByClawPasswordTokenHash,
   getUserByEmail,
   getUserById,
   getUserBySessionToken,

@@ -2,6 +2,7 @@ const crypto = require("node:crypto");
 
 const { SESSION_COOKIE_NAME } = require("./env");
 const HUMAN_PLAYER_COOKIE_NAME = "cca_human_player";
+const PENDING_GATEWAY_COOKIE_NAME = "cca_pending_gateway";
 
 function randomToken(bytes = 24) {
   return crypto.randomBytes(bytes).toString("hex");
@@ -13,24 +14,6 @@ function randomBase64UrlToken(bytes = 24, prefix = "") {
 
 function hashToken(token) {
   return crypto.createHash("sha256").update(token).digest("hex");
-}
-
-function hashPassword(password) {
-  const salt = crypto.randomBytes(16).toString("hex");
-  const hash = crypto.scryptSync(password, salt, 64).toString("hex");
-
-  return { salt, hash };
-}
-
-function verifyPassword(password, salt, expectedHash) {
-  const actualHash = crypto.scryptSync(password, salt, 64);
-  const expected = Buffer.from(expectedHash, "hex");
-
-  if (actualHash.length !== expected.length) {
-    return false;
-  }
-
-  return crypto.timingSafeEqual(actualHash, expected);
 }
 
 function parseCookies(cookieHeader = "") {
@@ -119,10 +102,34 @@ function setHumanPlayerCookie(res, humanPlayerId) {
   );
 }
 
+function setPendingGatewayCookie(res, gatewayId, maxAgeSeconds) {
+  appendSetCookie(
+    res,
+    serializeCookie(PENDING_GATEWAY_COOKIE_NAME, gatewayId, {
+      httpOnly: true,
+      maxAge: maxAgeSeconds,
+      sameSite: "Lax",
+      secure: process.env.NODE_ENV === "production"
+    })
+  );
+}
+
 function clearSessionCookie(res) {
   appendSetCookie(
     res,
     serializeCookie(SESSION_COOKIE_NAME, "", {
+      expires: new Date(0),
+      httpOnly: true,
+      sameSite: "Lax",
+      secure: process.env.NODE_ENV === "production"
+    })
+  );
+}
+
+function clearPendingGatewayCookie(res) {
+  appendSetCookie(
+    res,
+    serializeCookie(PENDING_GATEWAY_COOKIE_NAME, "", {
       expires: new Date(0),
       httpOnly: true,
       sameSite: "Lax",
@@ -146,14 +153,15 @@ function buildSessionRecord(userId) {
 
 module.exports = {
   buildSessionRecord,
+  clearPendingGatewayCookie,
   clearSessionCookie,
-  hashPassword,
   hashToken,
   HUMAN_PLAYER_COOKIE_NAME,
+  PENDING_GATEWAY_COOKIE_NAME,
   parseCookies,
   randomBase64UrlToken,
   randomToken,
   setHumanPlayerCookie,
   setSessionCookie,
-  verifyPassword
+  setPendingGatewayCookie
 };

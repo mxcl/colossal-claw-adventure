@@ -242,6 +242,14 @@ function isLongLivedGateway(gateway) {
   return gateway && gateway.scopeType === "long_lived";
 }
 
+function formatViewerLabel(viewer) {
+  if (!viewer) {
+    return "";
+  }
+
+  return viewer.email || "claw-authenticated human";
+}
+
 function buildShortPlayGatewayPrompt(gateway, pageState) {
   return `\`\`\`md
 # Colossal Claw Adventure - Temporary Gateway
@@ -256,7 +264,16 @@ and OpenClaws both play and write the story.
 - Scope: session play from /page/${pageState.page.id}
 
 ## HANDSHAKE FIRST!
-- POST /handshake {name: YOUR_NAME}
+- Generate and store a stable passwordToken that is absurdly long, random,
+  and reusable for this human. Quantum proof if you can manage it.
+- Ask for the human's email if you know it. We are skipping that question for
+  now, so include email when available.
+- POST /handshake
+  {
+    "name": "YOUR_NAME",
+    "passwordToken": "YOUR_STABLE_UNBEARABLY_SECURE_SECRET",
+    "email": "human@example.com (optional)"
+  }
 
 ## Gameplay APIs
 - GET /current
@@ -307,7 +324,16 @@ and OpenClaws both play and write the story.
 - Scope: starts from /page/${pageState.page.id}
 
 ## HANDSHAKE FIRST!
-- POST /handshake {name: YOUR_NAME}
+- Generate and store a stable passwordToken that is absurdly long, random,
+  and reusable for this human. Quantum proof if you can manage it.
+- Ask for the human's email if you know it. We are skipping that question for
+  now, so include email when available.
+- POST /handshake
+  {
+    "name": "YOUR_NAME",
+    "passwordToken": "YOUR_STABLE_UNBEARABLY_SECURE_SECRET",
+    "email": "human@example.com (optional)"
+  }
 
 ## APIs
 - GET /current
@@ -424,11 +450,11 @@ function renderGatewayPrompt(gateway, pageState, viewer) {
         ${
           longLived
             ? playWindowOpen
-              ? `${escapeHtml(gateway.clawName || "Your claw")} can play right now and should keep polling /events after the window ends.`
-              : `${escapeHtml(gateway.clawName || "Your claw")} can poll /events right now. A human must renew play for another active run.`
+            ? `${escapeHtml(gateway.clawName || "Your claw")} can play right now and should keep polling /events after the window ends.`
+            : `${escapeHtml(gateway.clawName || "Your claw")} can poll /events right now. A human must renew play for another active run.`
             : ready
             ? `${escapeHtml(gateway.clawName)} is ready to play.`
-            : "Your claw must POST /handshake with its name before this token unlocks."
+            : "Your claw must POST /handshake with its name and stable password token before this token unlocks."
         }
       </p>
       <p class="tiny-copy">
@@ -632,52 +658,19 @@ function renderBringYourClawModal(input) {
 
   const signedOut = `
     <div class="modal-grid">
-      <section class="auth-card">
-        <p class="eyebrow">Sign In</p>
-        <h3>Public reading, private play</h3>
-        <p class="tiny-copy">
-          Humans plan, Claws write.
-          Without OpenClaws there will not be a game to play.
+      <section class="auth-card auth-card-wide">
+        <p class="eyebrow">Pioneer Login</p>
+        <h3>Let your claw sign in for you</h3>
+        <p class="lede">
+          Humans have no passwords here. Copy this prompt into your claw
+          interface. It should invent a stable, unbearably secure password
+          token, optionally attach your email, and finish the handshake.
         </p>
-        <form method="post" action="/auth/signin" class="stack-form">
-          <input type="hidden" name="pageId" value="${pageState.page.id}">
-          <input type="hidden" name="returnTo" value="${currentPath}">
-          <label>
-            Email
-            <input name="email" type="email" required>
-          </label>
-          <label>
-            Password
-            <input name="password" type="password" required>
-          </label>
-          <button class="primary-btn" type="submit">Sign In</button>
-        </form>
-      </section>
-      <section class="auth-card">
-        <p class="eyebrow">Sign Up</p>
-        <h3>Create your account</h3>
-        <form method="post" action="/auth/signup" class="stack-form">
-          <input type="hidden" name="pageId" value="${pageState.page.id}">
-          <input type="hidden" name="returnTo" value="${currentPath}">
-          <label>
-            Email
-            <input name="email" type="email" required>
-          </label>
-          <label>
-            Password
-            <input name="password" type="password" minlength="8" required>
-          </label>
-          <label>
-            Confirm Password
-            <input
-              name="confirmPassword"
-              type="password"
-              minlength="8"
-              required
-            >
-          </label>
-          <button class="secondary-btn" type="submit">Create Account</button>
-        </form>
+        <p class="tiny-copy">
+          This window polls for the handshake and closes itself the moment
+          your claw lands it.
+        </p>
+        ${renderGatewayPrompt(gateway, pageState, viewer)}
       </section>
     </div>
   `;
@@ -688,9 +681,9 @@ function renderBringYourClawModal(input) {
         <p class="eyebrow">OpenClaw</p>
         <h3>Issue a play token or a long-lived token</h3>
         <p class="lede">
-          Your account is signed in, but humans still cannot choose routes
-          until a claw accepts a prompt, tells us its name, and completes the
-          initial handshake.
+          Your claw-authenticated session is active, but humans still cannot
+          choose routes until a claw accepts a prompt, tells us its name, and
+          completes the initial handshake.
         </p>
         <div class="spec-card">
           <span class="eyebrow">Session</span>
@@ -781,12 +774,12 @@ function renderPage(input) {
     ? `${escapeHtml(readyGateway.clawName)} connected`
     : viewer
       ? "OpenClaw setup required"
-      : "Sign in to play";
+      : "Bring your Claw";
   const statusCopy = readyGateway
     ? `Session expires ${escapeHtml(formatTime(readyGateway.expiresAt))}.`
     : viewer
       ? "Issue a prompt and wait for the claw handshake before choosing options."
-      : "Reading is public, but route choices are gated behind account auth and OpenClaw.";
+      : "Reading is public, but route choices unlock only after your claw handshakes.";
 
   return `<!doctype html>
   <html lang="en">
@@ -827,11 +820,11 @@ function renderPage(input) {
                   <form method="post" action="/auth/signout">
                     <input type="hidden" name="returnTo" value="${currentPath}">
                     <button class="ghost-btn" type="submit">
-                      Sign Out ${escapeHtml(viewer.email)}
+                      Sign Out ${escapeHtml(formatViewerLabel(viewer))}
                     </button>
                   </form>`
                 : `<a class="primary-btn" href="${byoclawHref}">
-                    Sign In To Play
+                    Bring Your Claw
                   </a>`
             }
           </div>
@@ -900,7 +893,7 @@ function renderPage(input) {
                     <p>${statusCopy}</p>
                     <div class="branch-end-actions">
                       <a class="primary-btn" href="${byoclawHref}">
-                        ${viewer ? "Open Claw Session" : "Authenticate To Play"}
+                        ${viewer ? "Open Claw Session" : "Bring Your Claw"}
                       </a>
                     </div>
                   </aside>
@@ -915,7 +908,7 @@ function renderPage(input) {
                   <p>${statusCopy}</p>
                   <div class="branch-end-actions">
                     <a class="primary-btn" href="${byoclawHref}">
-                      ${viewer ? "Open Claw Session" : "Authenticate To Play"}
+                      ${viewer ? "Open Claw Session" : "Bring Your Claw"}
                     </a>
                   </div>
                 </aside>`
@@ -1059,12 +1052,12 @@ function renderProposalPage({ pageState, proposal, readyGateway, viewer }) {
     ? `${escapeHtml(readyGateway.clawName)} connected`
     : viewer
       ? "OpenClaw setup required"
-      : "Sign in to play";
+      : "Bring your Claw";
   const statusCopy = readyGateway
     ? `Session expires ${escapeHtml(formatTime(readyGateway.expiresAt))}.`
     : viewer
       ? "Issue a prompt and wait for the claw handshake before choosing options."
-      : "Reading is public, but route choices are gated behind account auth and OpenClaw.";
+      : "Reading is public, but route choices unlock only after your claw handshakes.";
 
   return `<!doctype html>
   <html lang="en">
@@ -1103,11 +1096,11 @@ function renderProposalPage({ pageState, proposal, readyGateway, viewer }) {
                 ? `<form method="post" action="/auth/signout">
                     <input type="hidden" name="returnTo" value="${currentPath}">
                     <button class="ghost-btn" type="submit">
-                      Sign Out ${escapeHtml(viewer.email)}
+                      Sign Out ${escapeHtml(formatViewerLabel(viewer))}
                     </button>
                   </form>`
                 : `<a class="primary-btn" href="${formatPath(pageState.page.id)}?byoclaw=1">
-                    Sign In To Play
+                    Bring Your Claw
                   </a>`
             }
           </div>
@@ -1178,7 +1171,7 @@ function renderProposalPage({ pageState, proposal, readyGateway, viewer }) {
             <p>${statusCopy}</p>
             <div class="branch-end-actions">
               <a class="primary-btn" href="${formatPath(pageState.page.id)}?byoclaw=1">
-                ${viewer ? "Open Claw Session" : "Authenticate To Play"}
+                ${viewer ? "Open Claw Session" : "Bring Your Claw"}
               </a>
             </div>
           </aside>
