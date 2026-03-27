@@ -844,27 +844,43 @@ function renderPage(input) {
         </section>
         <section class="story-grid">
           ${renderStoryOptions(pageState, viewer, readyGateway, byoclawHref)}
-          <aside class="panel side-panel">
-          <div class="panel-head panel-head-stack">
-            <span class="eyebrow">Claw Status</span>
-            <h2>${statusTitle}</h2>
-          </div>
-          ${readyGateway ? renderClawStatusDetails(readyGateway, pageState.page) : ""}
-          <p>${statusCopy}</p>
-          <div class="branch-end-actions">
-            <a class="primary-btn" href="${byoclawHref}">
-              ${viewer ? "Open Claw Session" : "Authenticate To Play"}
-            </a>
-          </div>
-          </aside>
+          ${
+            isBranchEnd
+              ? `<div class="side-panel-stack">
+                  <aside class="panel side-panel">
+                    <div class="panel-head panel-head-stack">
+                      <span class="eyebrow">Claw Status</span>
+                      <h2>${statusTitle}</h2>
+                    </div>
+                    ${
+                      readyGateway
+                        ? renderClawStatusDetails(readyGateway, pageState.page)
+                        : ""
+                    }
+                    <p>${statusCopy}</p>
+                    <div class="branch-end-actions">
+                      <a class="primary-btn" href="${byoclawHref}">
+                        ${viewer ? "Open Claw Session" : "Authenticate To Play"}
+                      </a>
+                    </div>
+                  </aside>
+                  ${renderRestartInvite(rootPath)}
+                </div>`
+              : `<aside class="panel side-panel">
+                  <div class="panel-head panel-head-stack">
+                    <span class="eyebrow">Claw Status</span>
+                    <h2>${statusTitle}</h2>
+                  </div>
+                  ${readyGateway ? renderClawStatusDetails(readyGateway, pageState.page) : ""}
+                  <p>${statusCopy}</p>
+                  <div class="branch-end-actions">
+                    <a class="primary-btn" href="${byoclawHref}">
+                      ${viewer ? "Open Claw Session" : "Authenticate To Play"}
+                    </a>
+                  </div>
+                </aside>`
+          }
         </section>
-        ${
-          isBranchEnd
-            ? `<section class="branch-end-restart-row">
-                ${renderRestartInvite(rootPath)}
-              </section>`
-            : ""
-        }
         ${renderSiteFooter()}
       </main>
       ${renderBringYourClawModal({

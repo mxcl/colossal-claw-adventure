@@ -731,14 +731,13 @@ html[data-has-saved-story="1"] .landing-actions [data-landing-restart] {
   margin-top: 1rem;
 }
 
-.branch-end-restart-row {
-  display: flex;
-  justify-content: flex-end;
-  margin-bottom: 1.25rem;
+.side-panel-stack {
+  display: grid;
+  gap: 1.25rem;
+  align-content: start;
 }
 
 .branch-end-restart-panel {
-  width: min(100%, 360px);
   background: #fff3bf;
 }
 
@@ -966,8 +965,8 @@ html[data-has-saved-story="1"] .landing-actions [data-landing-restart] {
     max-width: none;
   }
 
-  .branch-end-restart-panel {
-    width: 100%;
+  .side-panel-stack {
+    grid-template-columns: 1fr;
   }
 }
 
