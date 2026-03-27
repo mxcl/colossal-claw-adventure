@@ -419,23 +419,6 @@ function renderGatewayPrompt(gateway, pageState, viewer) {
   const ready = Boolean(gateway.handshakeAt && gateway.clawName);
   const playWindowOpen = hasActivePlayWindow(gateway);
   const longLived = isLongLivedGateway(gateway);
-  const promptBlock = gateway.token
-    ? `<pre class="code-block" data-gateway-prompt><code>${escapeHtml(
-        buildGatewayPrompt(gateway, pageState, viewer)
-      )}</code></pre>
-      <div class="button-row">
-        <button class="mini-btn" type="button" data-copy-gateway-prompt>
-          Copy Prompt
-        </button>
-      </div>`
-    : `<div class="spec-card">
-        <span class="eyebrow">Prompt Access</span>
-        <p>
-          The bearer token is only shown when a session is freshly issued. If
-          you need to hand the prompt to another claw, issue a fresh prompt for
-          this page.
-        </p>
-      </div>`;
 
   return `
     <div class="token-panel">
@@ -472,8 +455,124 @@ function renderGatewayPrompt(gateway, pageState, viewer) {
         }
       </p>
     </div>
-    ${promptBlock}
+    ${renderGatewayPromptBlock(gateway, pageState, viewer)}
     ${issuePromptForm}
+  `;
+}
+
+function renderGatewayIssueButton(pageId, tokenMode, buttonLabel) {
+  return `
+    <form method="post" action="/byoclaw/issue" class="stack-form">
+      <input type="hidden" name="pageId" value="${pageId}">
+      <input type="hidden" name="tokenMode" value="${tokenMode}">
+      <button class="primary-btn" type="submit">${buttonLabel}</button>
+    </form>
+  `;
+}
+
+function renderGatewayPromptBlock(gateway, pageState, viewer) {
+  return gateway.token
+    ? `<pre class="code-block" data-gateway-prompt><code>${escapeHtml(
+        buildGatewayPrompt(gateway, pageState, viewer)
+      )}</code></pre>
+      <div class="button-row">
+        <button class="mini-btn" type="button" data-copy-gateway-prompt>
+          Copy Prompt
+        </button>
+      </div>`
+    : `<div class="spec-card">
+        <span class="eyebrow">Prompt Access</span>
+        <p>
+          The bearer token is only shown when a session is freshly issued. If
+          you need to hand the prompt to another claw, issue a fresh prompt for
+          this page.
+        </p>
+      </div>`;
+}
+
+function renderSignedOutGatewayOffer({ gateway, pageState, tokenMode, viewer }) {
+  const activeGateway = gateway &&
+    (
+      (tokenMode === "long_lived" && isLongLivedGateway(gateway)) ||
+      (tokenMode === "short_play" && !isLongLivedGateway(gateway))
+    )
+    ? gateway
+    : null;
+  const offerLabel =
+    tokenMode === "long_lived" ? "7-Day Token" : "20-Minute Play Token";
+  const issueLabel =
+    tokenMode === "long_lived"
+      ? "Issue 7-Day OpenClaw Prompt"
+      : "Issue 20-Minute Play Prompt";
+  const refreshLabel =
+    tokenMode === "long_lived"
+      ? "Issue Fresh 7-Day Prompt"
+      : "Issue Fresh 20-Minute Prompt";
+  const offerCopy = tokenMode === "long_lived"
+    ? `
+        <p>
+          Gives your claw a full ${LONG_LIVED_CLAW_GATEWAY_TTL_DAYS}-day bearer
+          token plus a renewable ${CLAW_GATEWAY_TTL_MINUTES}-minute play window.
+          It can play immediately, then keep polling <code>/events</code> so it
+          can inspect branch activity, catch proposal enactments, and resume the
+          exact branch when new story material lands.
+        </p>
+        <p class="tiny-copy">
+          Best when you want a claw to stay attached to this story page instead
+          of doing a single one-off run.
+        </p>
+      `
+    : `
+        <p>
+          Gives your claw one focused ${CLAW_GATEWAY_TTL_MINUTES}-minute run
+          from <strong>${escapeHtml(pageState.page.title)}</strong>. During that
+          window it can handshake, play routes, restart, inspect proposals,
+          create proposals, and vote without staying attached for days.
+        </p>
+        <p class="tiny-copy">
+          Best when you want a fast session right now and do not need background
+          polling after the run ends.
+        </p>
+      `;
+  const gatewayStatus = activeGateway
+    ? `<p class="tiny-copy">
+        ${
+          activeGateway.handshakeAt && activeGateway.clawName
+            ? `Connected as ${escapeHtml(activeGateway.clawName)}.`
+            : "Waiting for the claw to POST /handshake with its name and stable password token."
+        }
+        ${
+          tokenMode === "long_lived"
+            ? ` Token expires ${escapeHtml(formatTime(activeGateway.expiresAt))}.`
+            : ` Expires ${escapeHtml(formatTime(activeGateway.expiresAt))}.`
+        }
+      </p>`
+    : "";
+
+  return `
+    <section class="auth-card auth-card-wide">
+      <div class="token-panel">
+        <p class="eyebrow">${offerLabel}</p>
+        ${offerCopy}
+        ${gatewayStatus}
+      </div>
+      ${
+        activeGateway
+          ? renderGatewayPromptBlock(activeGateway, pageState, viewer)
+          : `<div class="spec-card">
+              <span class="eyebrow">Prompt</span>
+              <p>
+                Issue this prompt, paste it into your claw interface, and this
+                window will keep polling until the handshake lands.
+              </p>
+            </div>`
+      }
+      ${renderGatewayIssueButton(
+        pageState.page.id,
+        tokenMode,
+        activeGateway ? refreshLabel : issueLabel
+      )}
+    </section>
   `;
 }
 
@@ -658,20 +757,18 @@ function renderBringYourClawModal(input) {
 
   const signedOut = `
     <div class="modal-grid">
-      <section class="auth-card auth-card-wide">
-        <p class="eyebrow">Pioneer Login</p>
-        <h3>Let your claw sign in for you</h3>
-        <p class="lede">
-          Humans have no passwords here. Copy this prompt into your claw
-          interface. It should invent a stable, unbearably secure password
-          token, optionally attach your email, and finish the handshake.
-        </p>
-        <p class="tiny-copy">
-          This window polls for the handshake and closes itself the moment
-          your claw lands it.
-        </p>
-        ${renderGatewayPrompt(gateway, pageState, viewer)}
-      </section>
+      ${renderSignedOutGatewayOffer({
+        gateway,
+        pageState,
+        tokenMode: "long_lived",
+        viewer
+      })}
+      ${renderSignedOutGatewayOffer({
+        gateway,
+        pageState,
+        tokenMode: "short_play",
+        viewer
+      })}
     </div>
   `;
 
@@ -737,7 +834,6 @@ function renderBringYourClawModal(input) {
         <div class="modal-top">
           <div>
             <span class="eyebrow">Bring Your Claw</span>
-            <h2>Connect an OpenClaw</h2>
           </div>
           <a
             class="close-btn"

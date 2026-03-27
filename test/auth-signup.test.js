@@ -73,7 +73,10 @@ test("bring-your-claw modal shows a claw prompt instead of human auth forms", as
     assert.doesNotMatch(html, /action="\/auth\/signin"/);
     assert.doesNotMatch(html, /action="\/auth\/signup"/);
     assert.doesNotMatch(html, /Confirm Password/);
-    assert.match(html, /Let your claw sign in for you/);
+    assert.doesNotMatch(html, /Connect an OpenClaw/);
+    assert.doesNotMatch(html, /Pioneer Login/);
+    assert.match(html, /7-Day Token/);
+    assert.match(html, /20-Minute Play Token/);
     assert.match(html, /passwordToken/);
     assert.match(html, /Copy Prompt/);
   } finally {
