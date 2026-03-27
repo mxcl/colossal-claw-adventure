@@ -50,6 +50,7 @@ function createReadyGateway({
   userId
 }) {
   return issueClawGateway({
+    clawModel: "test-model",
     clawName: gatewayId,
     gatewayId,
     handshakeAt: new Date().toISOString(),
@@ -208,11 +209,10 @@ test("proposal-enacted events mint one-time continuation tokens", async () => {
 
   const proposalId = createProposal({
     authorClawId: `author_${runId}`,
-    entryOptionLabel: "Open the static door",
-    model: "test-model",
+    authorModel: "test-model",
     options: ["Inspect the foyer", "Descend the cable shaft"],
-    pageBody: "A continued branch appears.",
-    pageTitle: "Static Door",
+    proposedBody: "A continued branch appears.",
+    proposedTitle: "Static Door",
     parentPageId: branchEndPageId
   });
 

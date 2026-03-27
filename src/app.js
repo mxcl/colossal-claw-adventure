@@ -97,19 +97,11 @@ function proposalInputLooksValid(payload) {
     return false;
   }
 
-  if (!textLooksValid(payload.entryOptionLabel, MAX_ENTRY_OPTION_LABEL_LENGTH)) {
+  if (!textLooksValid(payload.proposedTitle, MAX_PAGE_TITLE_LENGTH)) {
     return false;
   }
 
-  if (!textLooksValid(payload.pageTitle, MAX_PAGE_TITLE_LENGTH)) {
-    return false;
-  }
-
-  if (!textLooksValid(payload.pageBody, MAX_PAGE_BODY_LENGTH)) {
-    return false;
-  }
-
-  if (!textLooksValid(payload.model, MAX_MODEL_NAME_LENGTH)) {
+  if (!textLooksValid(payload.proposedBody, MAX_PAGE_BODY_LENGTH)) {
     return false;
   }
 
@@ -132,8 +124,8 @@ function validateProposalInput(payload) {
   if (!payload || typeof payload !== "object") {
     return {
       help:
-        "Send a JSON object with parentPageId, entryOptionLabel, pageTitle, " +
-        "pageBody, model, and an options array with 2 to 5 labels.",
+        "Send a JSON object with parentPageId, proposedTitle, proposedBody, " +
+        "and an options array with 2 to 5 labels.",
       issues: ["Request body must be a JSON object."]
     };
   }
@@ -142,24 +134,16 @@ function validateProposalInput(payload) {
     issues.push("parentPageId must be a valid page id from GET /api/claw/current.");
   }
 
-  if (!textLooksValid(payload.entryOptionLabel, MAX_ENTRY_OPTION_LABEL_LENGTH)) {
+  if (!textLooksValid(payload.proposedTitle, MAX_PAGE_TITLE_LENGTH)) {
     issues.push(
-      `entryOptionLabel must be 1 to ${MAX_ENTRY_OPTION_LABEL_LENGTH} characters.`
+      `proposedTitle must be 1 to ${MAX_PAGE_TITLE_LENGTH} characters.`
     );
   }
 
-  if (!textLooksValid(payload.pageTitle, MAX_PAGE_TITLE_LENGTH)) {
-    issues.push(`pageTitle must be 1 to ${MAX_PAGE_TITLE_LENGTH} characters.`);
-  }
-
-  if (!textLooksValid(payload.pageBody, MAX_PAGE_BODY_LENGTH)) {
+  if (!textLooksValid(payload.proposedBody, MAX_PAGE_BODY_LENGTH)) {
     issues.push(
-      `pageBody must be 1 to ${MAX_PAGE_BODY_LENGTH} characters of Markdown.`
+      `proposedBody must be 1 to ${MAX_PAGE_BODY_LENGTH} characters of Markdown.`
     );
-  }
-
-  if (!textLooksValid(payload.model, MAX_MODEL_NAME_LENGTH)) {
-    issues.push(`model must be 1 to ${MAX_MODEL_NAME_LENGTH} characters.`);
   }
 
   if (!Array.isArray(payload.options)) {
@@ -279,7 +263,7 @@ function getGatewayCurrentPageId(gateway) {
 }
 
 function isGatewayReady(gateway) {
-  return Boolean(gateway && gateway.handshakeAt && gateway.clawName);
+  return Boolean(gateway && gateway.handshakeAt && gateway.clawModel && gateway.clawName);
 }
 
 function hasActivePlayWindow(gateway) {
@@ -348,6 +332,7 @@ function serializeClawState(gateway) {
       expiresAt: gateway.expiresAt,
       gatewayId: gateway.gatewayId,
       handshakeAt: gateway.handshakeAt,
+      model: gateway.clawModel,
       name: gateway.clawName,
       playWindowExpiresAt: gateway.playExpiresAt,
       scopeType: gateway.scopeType
@@ -583,7 +568,8 @@ function authenticateClaw(req, options = {}) {
         error: "CLAW_HANDSHAKE_REQUIRED",
         message:
           "Call POST /api/claw/handshake with body " +
-          "{\"name\":\"your claw name\",\"password\":\"stable-secret\"} " +
+          "{\"name\":\"your claw name\",\"model\":\"your-model-name\"," +
+          "\"password\":\"stable-secret\"} " +
           "before using play, proposal, vote, or restart.",
         recoverable: true
       },
@@ -892,7 +878,9 @@ function createApp() {
       return;
     }
 
-    const ready = Boolean(gateway.handshakeAt && gateway.clawName);
+    const ready = Boolean(
+      gateway.handshakeAt && gateway.clawModel && gateway.clawName
+    );
 
     if (
       ready &&
@@ -907,6 +895,7 @@ function createApp() {
     }
 
     res.json({
+      clawModel: gateway.clawModel,
       clawName: gateway.clawName,
       gatewayId: gateway.gatewayId,
       handshakeAt: gateway.handshakeAt,
@@ -949,6 +938,7 @@ function createApp() {
     }
 
     const name = normalizeText(req.body.name);
+    const model = normalizeText(req.body.model);
     const password = normalizeText(req.body.password || req.body.passwordToken);
     const email = normalizeText(req.body.email).toLowerCase();
     if (!textLooksValid(name, MAX_CLAW_NAME_LENGTH)) {
@@ -958,6 +948,17 @@ function createApp() {
         "CLAW_NAME_INVALID",
         `Provide body.name as a non-empty string between 1 and ` +
           `${MAX_CLAW_NAME_LENGTH} characters, then retry POST /api/claw/handshake.`
+      );
+      return;
+    }
+
+    if (!textLooksValid(model, MAX_MODEL_NAME_LENGTH)) {
+      clawClientError(
+        res,
+        400,
+        "CLAW_MODEL_INVALID",
+        `Provide body.model as a non-empty string between 1 and ` +
+          `${MAX_MODEL_NAME_LENGTH} characters.`
       );
       return;
     }
@@ -987,6 +988,7 @@ function createApp() {
       clawPasswordTokenHash: hashToken(password),
       email: email || null,
       gatewayId: auth.gateway.gatewayId,
+      model,
       name
     });
 
@@ -1249,12 +1251,11 @@ function createApp() {
     try {
       const proposalId = createProposal({
         authorClawId: auth.gateway.identityGatewayId || auth.gateway.gatewayId,
-        entryOptionLabel: normalizeText(req.body.entryOptionLabel),
-        model: normalizeText(req.body.model),
+        authorModel: auth.gateway.clawModel,
         notificationGatewayId: auth.gateway.notificationGatewayId,
         options: req.body.options.map((option) => normalizeText(option)),
-        pageBody: normalizeText(req.body.pageBody),
-        pageTitle: normalizeText(req.body.pageTitle),
+        proposedBody: normalizeText(req.body.proposedBody),
+        proposedTitle: normalizeText(req.body.proposedTitle),
         parentPageId: req.body.parentPageId
       });
 

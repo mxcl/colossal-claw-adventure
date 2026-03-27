@@ -107,6 +107,7 @@ test("handshake creates a browser session and stable token reuse updates email",
       {
         body: JSON.stringify({
           email: "pioneer-one@example.com",
+          model: "gpt-test-1",
           name: "Pioneer Claw",
           password
         }),
@@ -120,6 +121,7 @@ test("handshake creates a browser session and stable token reuse updates email",
     const firstHandshakeBody = await firstHandshakeResponse.json();
 
     assert.equal(firstHandshakeResponse.status, 200);
+    assert.equal(firstHandshakeBody.claw.model, "gpt-test-1");
     assert.equal(firstHandshakeBody.claw.name, "Pioneer Claw");
 
     const firstStatusResponse = await fetch(
@@ -167,6 +169,7 @@ test("handshake creates a browser session and stable token reuse updates email",
       {
         body: JSON.stringify({
           email: "pioneer-two@example.com",
+          model: "gpt-test-2",
           name: "Pioneer Claw Again",
           password
         }),

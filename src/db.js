@@ -293,6 +293,7 @@ function createDatabase() {
       play_expires_at TEXT,
       notification_gateway_id TEXT,
       identity_gateway_id TEXT,
+      claw_model TEXT,
       revoked_at TEXT,
       FOREIGN KEY(user_id) REFERENCES users(id),
       FOREIGN KEY(page_id) REFERENCES story_pages(id)
@@ -608,6 +609,10 @@ function migrateClawGatewaySessions(database) {
 
   if (!gatewayColumns.includes("current_page_id")) {
     database.exec("ALTER TABLE claw_gateways ADD COLUMN current_page_id INTEGER");
+  }
+
+  if (!gatewayColumns.includes("claw_model")) {
+    database.exec("ALTER TABLE claw_gateways ADD COLUMN claw_model TEXT");
   }
 
   database.exec(`
@@ -1357,6 +1362,28 @@ function getPage(pageId) {
   return { options, page };
 }
 
+function getIncomingOptionLabel(pageId) {
+  const resolvedPageId = resolvePageId(pageId);
+
+  if (!resolvedPageId) {
+    return null;
+  }
+
+  const row = db
+    .prepare(
+      `
+      SELECT label
+      FROM page_options
+      WHERE target_page_id = ?
+      ORDER BY sort_order ASC, id ASC
+      LIMIT 1
+      `
+    )
+    .get(resolvedPageId);
+
+  return row?.label || null;
+}
+
 function getBreadcrumb(pageId) {
   const trail = [];
   let currentId = pageId;
@@ -1436,10 +1463,10 @@ function getProposals(parentPageId, voterClawId = null) {
         proposals.id,
         proposals.parent_page_id AS parentPageId,
         proposals.entry_option_label AS entryOptionLabel,
-        proposals.page_title AS pageTitle,
-        proposals.page_body AS pageBody,
+        proposals.page_title AS proposedTitle,
+        proposals.page_body AS proposedBody,
         proposals.author_claw_id AS authorClawId,
-        proposals.author_model AS model,
+        proposals.author_model AS authorModel,
         proposals.status,
         proposals.created_at AS createdAt,
         COUNT(proposal_votes.id) AS votes
@@ -1482,13 +1509,13 @@ function getProposals(parentPageId, voterClawId = null) {
       ? hasVoted(proposal.id, voterClawId)
       : false,
     authorClawId: proposal.authorClawId,
+    authorModel: proposal.authorModel,
     createdAt: proposal.createdAt,
     entryOptionLabel: proposal.entryOptionLabel,
     id: proposal.id,
-    model: proposal.model,
     options: optionsByProposal.get(proposal.id) || [],
-    pageBody: proposal.pageBody,
-    pageTitle: proposal.pageTitle,
+    proposedBody: proposal.proposedBody,
+    proposedTitle: proposal.proposedTitle,
     selfAuthored: voterClawId ? proposal.authorClawId === voterClawId : false,
     status: proposal.status,
     votes: proposal.votes
@@ -2021,6 +2048,7 @@ function issueClawGateway({
   notificationGatewayId = null,
   identityGatewayId = gatewayId,
   clawName = null,
+  clawModel = null,
   handshakeAt = null,
   userId
 }) {
@@ -2070,9 +2098,10 @@ function issueClawGateway({
       notification_gateway_id,
       identity_gateway_id,
       claw_name,
+      claw_model,
       handshake_at
     )
-    VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `
   ).run(
     gatewayId,
@@ -2087,6 +2116,7 @@ function issueClawGateway({
     resolvedNotificationGatewayId,
     identityGatewayId,
     clawName,
+    clawModel,
     handshakeAt
   );
 
@@ -2134,6 +2164,7 @@ function listActiveGatewaysForUser(userId) {
         claw_gateways.identity_gateway_id AS identityGatewayId,
         story_pages.title AS pageTitle,
         claw_gateways.claw_name AS clawName,
+        claw_gateways.claw_model AS clawModel,
         claw_gateways.handshake_at AS handshakeAt,
         current_pages.public_id AS currentPageId,
         current_pages.title AS currentPageTitle
@@ -2194,6 +2225,7 @@ function findGatewayByTokenHash(tokenHash) {
           claw_gateways.identity_gateway_id AS identityGatewayId,
           claw_gateways.revoked_at AS revokedAt,
           claw_gateways.claw_name AS clawName,
+          claw_gateways.claw_model AS clawModel,
           claw_gateways.handshake_at AS handshakeAt,
           users.email AS userEmail
         FROM claw_gateways
@@ -2237,6 +2269,7 @@ function findGatewayById(gatewayId) {
           claw_gateways.identity_gateway_id AS identityGatewayId,
           claw_gateways.revoked_at AS revokedAt,
           claw_gateways.claw_name AS clawName,
+          claw_gateways.claw_model AS clawModel,
           claw_gateways.handshake_at AS handshakeAt,
           users.email AS userEmail
         FROM claw_gateways
@@ -2282,6 +2315,7 @@ function getLatestActiveGatewayForUser(userId) {
           claw_gateways.notification_gateway_id AS notificationGatewayId,
           claw_gateways.identity_gateway_id AS identityGatewayId,
           claw_gateways.claw_name AS clawName,
+          claw_gateways.claw_model AS clawModel,
           claw_gateways.handshake_at AS handshakeAt
         FROM claw_gateways
         INNER JOIN story_pages
@@ -2327,6 +2361,7 @@ function getLatestReadyGatewayForUser(userId) {
           claw_gateways.notification_gateway_id AS notificationGatewayId,
           claw_gateways.identity_gateway_id AS identityGatewayId,
           claw_gateways.claw_name AS clawName,
+          claw_gateways.claw_model AS clawModel,
           claw_gateways.handshake_at AS handshakeAt
         FROM claw_gateways
         INNER JOIN story_pages
@@ -2352,10 +2387,13 @@ function completeGatewayHandshake({
   clawPasswordTokenHash,
   email = null,
   gatewayId,
+  model,
   name
 }) {
   const normalizedName =
     typeof name === "string" ? name.trim().slice(0, 120) : "";
+  const normalizedModel =
+    typeof model === "string" ? model.trim().slice(0, 160) : "";
   const normalizedEmail =
     typeof email === "string" && email.trim()
       ? email.trim().toLowerCase()
@@ -2367,6 +2405,10 @@ function completeGatewayHandshake({
 
   if (!clawPasswordTokenHash) {
     throw new Error("Claw password token hash is required.");
+  }
+
+  if (!normalizedModel) {
+    throw new Error("Claw model is required.");
   }
 
   const performHandshake = db.transaction(() => {
@@ -2445,12 +2487,13 @@ function completeGatewayHandshake({
         SET
           user_id = ?,
           claw_name = ?,
+          claw_model = ?,
           handshake_at = COALESCE(handshake_at, CURRENT_TIMESTAMP),
           last_activity_at = CURRENT_TIMESTAMP
         WHERE id = ?
       `
       )
-      .run(targetUserId, normalizedName, gateway.id);
+      .run(targetUserId, normalizedName, normalizedModel, gateway.id);
 
     if (gateway.userId !== targetUserId) {
       deleteUserIfOrphaned(gateway.userId);
@@ -2662,6 +2705,7 @@ function redeemContinuation({
         claw_continuations.notification_gateway_id AS notificationGatewayId,
         claw_continuations.redeemed_at AS redeemedAt,
         claw_gateways.claw_name AS clawName,
+        claw_gateways.claw_model AS clawModel,
         claw_gateways.handshake_at AS handshakeAt,
         claw_gateways.identity_gateway_id AS identityGatewayId,
         claw_gateways.expires_at AS gatewayExpiresAt
@@ -2686,6 +2730,7 @@ function redeemContinuation({
   const continuationGatewayId = randomBase64UrlToken(12, "cca_gateway_");
   const continuationGateway = issueClawGateway({
     clawName: continuation.clawName,
+    clawModel: continuation.clawModel,
     gatewayId: continuationGatewayId,
     handshakeAt: continuation.handshakeAt,
     identityGatewayId: continuation.identityGatewayId || gatewayId,
@@ -2720,6 +2765,7 @@ function redeemContinuation({
     gateway: {
       ...continuationGateway,
       clawName: continuation.clawName,
+      clawModel: continuation.clawModel,
       handshakeAt: continuation.handshakeAt,
       identityGatewayId: continuation.identityGatewayId || gatewayId,
       notificationGatewayId: continuation.notificationGatewayId
@@ -2836,6 +2882,7 @@ function getGatewayActivity(gatewayId) {
         claw_gateways.created_at AS createdAt,
         claw_gateways.handshake_at AS handshakeAt,
         claw_gateways.claw_name AS clawName,
+        claw_gateways.claw_model AS clawModel,
         start_pages.title AS pageTitle,
         start_pages.public_id AS pageId,
         current_pages.title AS currentPageTitle,
@@ -2867,7 +2914,9 @@ function getGatewayActivity(gatewayId) {
   if (gateway.handshakeAt && gateway.clawName) {
     items.push({
       createdAt: gateway.handshakeAt,
-      summary: `Handshake completed as ${gateway.clawName}.`,
+      summary:
+        `Handshake completed as ${gateway.clawName} using ` +
+        `${gateway.clawModel || "unknown"}.`,
       type: "handshake"
     });
   }
@@ -2877,7 +2926,7 @@ function getGatewayActivity(gatewayId) {
       `
       SELECT
         proposals.id,
-        proposals.page_title AS pageTitle,
+        proposals.page_title AS proposedTitle,
         proposals.created_at AS createdAt,
         CASE
           WHEN parent_pages.is_stub = 1 AND grandparent_pages.title IS NOT NULL
@@ -2900,7 +2949,7 @@ function getGatewayActivity(gatewayId) {
       createdAt: proposal.createdAt,
       proposalId: proposal.id,
       summary:
-        `Created proposal #${proposal.id} "${proposal.pageTitle}" to follow ` +
+        `Created proposal #${proposal.id} "${proposal.proposedTitle}" to follow ` +
         `"${proposal.parentPageTitle}".`,
       type: "proposal"
     });
@@ -3107,6 +3156,12 @@ function createProposal(input) {
       throw new Error("Proposals can only be created from a branch end.");
     }
 
+    const entryOptionLabel = getIncomingOptionLabel(parentPageId);
+
+    if (!entryOptionLabel) {
+      throw new Error("Parent page must have an incoming option.");
+    }
+
     const result = db
       .prepare(
         `
@@ -3123,11 +3178,11 @@ function createProposal(input) {
       )
       .run(
         parentPageId,
-        input.entryOptionLabel,
-        input.pageTitle,
-        input.pageBody,
+        entryOptionLabel,
+        input.proposedTitle,
+        input.proposedBody,
         input.authorClawId,
-        input.model
+        input.authorModel
       );
 
     const proposalId = Number(result.lastInsertRowid);

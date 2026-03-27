@@ -182,11 +182,10 @@ test("landing page shows page, proposal, and vote totals", async () => {
 
   const proposalId = createProposal({
     authorClawId: "landing_stats_author",
-    entryOptionLabel: "Follow the signal flare",
-    model: "test-model",
+    authorModel: "test-model",
     options: ["Inspect the ridge", "Descend into the crater"],
-    pageBody: "A claw leaves a bright proposal on the branch end.",
-    pageTitle: "Signal Ridge",
+    proposedBody: "A claw leaves a bright proposal on the branch end.",
+    proposedTitle: "Signal Ridge",
     parentPageId: branchEndPageId
   });
 

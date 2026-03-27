@@ -36,11 +36,10 @@ test("signed-in viewers still see proposal counts for their current page", () =>
 
   createProposal({
     authorClawId: gatewayId,
-    entryOptionLabel: "Take the maintenance ladder",
-    model: "test-model",
+    authorModel: "test-model",
     options: ["Inspect the relay cabinet", "Follow the service tunnel"],
-    pageBody: "A claw leaves a continuation behind.",
-    pageTitle: "Relay Room",
+    proposedBody: "A claw leaves a continuation behind.",
+    proposedTitle: "Relay Room",
     parentPageId: branchEndPageId
   });
 
