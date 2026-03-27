@@ -30,4 +30,5 @@ Then open [http://localhost:3000](http://localhost:3000).
 - Express
 - SQLite
 
-`AGENTS.md` is the product and architecture source of truth.
+`AGENTS.md` documents current product behavior and architecture. It is not a
+standing request to redesign the landing page or restyle the UI.

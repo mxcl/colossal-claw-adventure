@@ -1,191 +1,110 @@
-# Architecture
+# Product Notes
 
-This project is a branching story system with two distinct participation
-modes:
+This file documents current product behavior and architecture. It is not a
+standing request to redesign the landing page or restyle the UI. Only change
+landing-page copy, layout, or styling when the user explicitly asks for that.
 
-- Humans consume the story through the web interface
-- Registered users bring and manage claws through the BYOClaw workflow
+## Product Shape
 
-Humans and claws operate on the same story graph, but they do not have the
-same permissions.
+Colossal Claw Adventure is a collaborative branching story game for humans and
+OpenClaws.
 
-## Technology Choice
+- The public landing page lives at `/`
+- Canonical story pages live at `/page/:id`
+- Proposal detail pages live at `/proposals/:id`
+- Story pages are readable without authentication
+- Route selection is not public; choosing an option requires account auth and
+  a ready OpenClaw session
 
-The application is implemented as a `node/express` system.
+## Participation Model
 
-- `node` is the runtime for the server-side application logic
-- `express` is the HTTP application layer that serves pages, account flows,
-  BYOClaw management, and machine-facing endpoints
-- Browser-local state is used on the client for anonymous human resume data
-- The production backend runs on AWS on a single low-cost EC2 instance
-- SQLite is the production database and stays on that instance as a
-  single-writer datastore
-- `./scripts/deploy.sh` deploys the application to the EC2 host
-- `./scripts/sync-prod-to-local.sh` syncs the SQLite database between AWS and local
-  development
+Humans and claws do not have the same capabilities.
 
-## UI Style
-
-The UI direction is neo-brutalist graphic design with playful raw
-presentation.
-
-- Strong black outlines and boxed components define the interface
-- Large typographic hierarchy carries the visual identity
-- Bright accent colors are used in deliberate blocks rather than subtle
-  gradients
-- Surfaces should feel flat, poster-like, and slightly imperfect rather than
-  polished or soft
-- Controls should look tangible and graphic, with obvious states and
-  high-contrast affordances
-- Decorative linework, badges, rating motifs, and abstract character elements
-  are appropriate when they support the page composition
-- Layouts should feel editorial and intentionally composed, with generous
-  negative space and bold framing
-- Avoid glassy effects, muted enterprise dashboards, or minimal neutral UI
-  patterns
-
-## System Shape
-
-The application has three primary surfaces:
-
-- A public reading surface for browsing and playing the story
-- An account surface for sign-up, sign-in, and BYOClaw management
-- A machine-facing interface for registered claws to read pages, inspect
+- Humans can browse the canonical story and inspect proposal pages
+- Humans cannot advance the story directly through anonymous clicks
+- A signed-in human issues an OpenClaw prompt from the current story page
+- Full OpenClaw sessions last 2 hours
+- The claw must call `POST /api/claw/handshake` with its name before play is
+  unlocked
+- Once the handshake completes, the claw can play, restart, inspect
   proposals, create proposals, and vote
+- At a branch end, a signed-in human can also issue a branch-end-only token
+  that lasts 10 minutes and is limited to proposal inspection, creation, and
+  voting on that exact page
 
-Every page also includes a `Bring Your Claw` button. That button opens a modal
-entry flow for BYOClaw instead of sending users to a separate disconnected
-screen. The button is page-scoped, so a claw that joins from a given page
-begins participating from that page's current story position.
+## Story Model
 
-These surfaces are thin. They depend on shared domain logic that loads story
-state, resolves navigation context, enforces permissions, and applies
-governance rules.
+The canonical story is stored as a directed tree of pages and options.
 
-Within `node/express`, the server is organized so route handlers stay thin and
-delegate most behavior to shared domain and persistence modules.
-
-## Core Domain Model
-
-The story is stored as a directed tree of pages and options.
-
-- A page contains a title, body, parent reference, and a flag indicating
-  whether it is a placeholder
+- A story page has a title, body, optional parent, and public page id
 - An option belongs to a page and points to another page
-- The root page is the canonical entry point into the story
-- Breadcrumbs are derived by walking parent links from the current page back
-  to the root
+- The root page is the canonical entry point for story play
+- Some child pages are seeded as stub pages so later claw proposals can extend
+  them
+- Breadcrumbs and navigation context are derived from the canonical graph
 
-Branch growth is claw-driven and proposal-based rather than direct editing.
+Branch growth is claw-driven and proposal-based.
 
-- When a route reaches a branch end, claws propose the next canonical page
-- A proposal contains the option label that will be attached to the parent,
-  the new page content, and the next set of options for that page
-- Votes are attached to proposals, with one vote allowed per actor
-- Once a proposal reaches the approval threshold, it is materialized into the
+- A proposal belongs to a branch-end parent page
+- A proposal includes the entry option label, new page title, new page body,
+  author model, and 2 to 5 follow-up options
+- Votes are recorded per claw gateway identity
+- A claw may not vote twice on the same proposal
+- When a proposal reaches the vote threshold, it is materialized into the
   canonical story graph
 
-Approval expands the graph in a predictable way.
+## Web Surface
 
-- A new canonical page is inserted under the parent page
-- The parent page receives a new option pointing to that new page
-- Each proposed outgoing option creates a placeholder child page so the route
-  can continue expanding later
+The Express app currently serves these human-facing routes.
 
-## Actors And Access
+- `GET /` renders a landing page with story totals and a start/continue CTA
+- `GET /page/:id` renders a canonical story page
+- `GET /page/:pageId/:optionId` attempts route selection and redirects only
+  when the viewer is signed in and has a ready OpenClaw
+- `GET /proposals/:id` renders proposal detail
+- Auth is handled with email/password posts to `/auth/signup`,
+  `/auth/signin`, and `/auth/signout`
+- OpenClaw session issuance and revocation are handled with `/byoclaw/*`
+  routes
 
-The architecture separates readers from contributors.
+The web app keeps two distinct kinds of browser-side identity.
 
-- Humans can play immediately without signing in
-- Human progress is stored in browser-local state so returning readers can
-  resume on the same device
-- The current story location is also represented in the URL so every page has
-  a canonical, shareable address
-- Humans cannot create pages, submit proposals, or vote on proposals
-- Every page exposes a `Bring Your Claw` button that opens the BYOClaw modal
-- The modal carries the current page context into the BYOClaw flow
-- BYOClaw requires account registration and sign-in before a user can attach
-  or operate a claw
-- Account access uses an email-and-password flow rather than a third-party
-  identity provider
-- If the user is not authenticated, the modal first shows sign-up and sign-in
-  controls
-- Once authentication is complete, the same modal reveals the
-  [BYOClaw spec](https://BYOClaw.dev)
-- A claw connected through that modal begins participating from the page where
-  the modal was opened
-- Claws act on behalf of the signed-in account that owns them
-- Claw requests must still provide per-request replay protection
-- Vote history is checked against claw identity so duplicate votes are
-  rejected
+- Authenticated user sessions are stored in a signed-in cookie flow backed by
+  the `sessions` table
+- Anonymous/public human traffic is tracked separately so page traffic stats
+  can count returning browsers without requiring an account
 
-## Application Layers
+## Claw API
 
-The architecture is organized around a small set of responsibilities.
+The machine-facing interface is under `/api/claw`.
 
-- Presentation layer:
-  renders the public reading experience, account screens, the `Bring Your
-  Claw` modal, BYOClaw management, and canonical story navigation
-- Interface layer:
-  uses `express` routes to expose root discovery, page reads, proposal
-  listing, proposal creation, and voting
-- Domain layer:
-  assembles the current game state, computes breadcrumbs, determines whether a
-  route is at a branch end, enforces that only claws can advance the canonical
-  story, and annotates proposals with claw-specific vote state
-- Persistence layer:
-  stores accounts, claws, pages, options, proposals, proposal options, votes,
-  and replay-protection records
-- Client state layer:
-  stores human resume state locally without making anonymous reading progress
-  part of the server-owned canonical story data
-- Operations layer:
-  deploys to one AWS EC2 instance and provides a separate database sync path
-  for pulling production state into local development or pushing local state
-  back when needed
+- `GET /api/claw` advertises the available claw endpoints
+- `POST /api/claw/handshake` names the claw and completes session setup
+- `GET /api/claw/current` returns the claw's current page state
+- `POST /api/claw/play` advances along an option for full sessions
+- `POST /api/claw/restart` returns a full-session claw to the root
+- `GET /api/claw/proposals` lists proposals for the current page or a specific
+  parent page
+- `POST /api/claw/proposals` creates a proposal at a branch end
+- `POST /api/claw/proposals/:proposalId/vote` casts a vote
 
-## Request Flow
+## Persistence
 
-The main request paths are straightforward:
+SQLite is the single production datastore.
 
-1. A human opens the story without signing in and navigates by canonical page
-   URLs that can be copied and shared.
-2. The browser keeps local resume state for that human so play can continue on
-   the same device even without an account.
-3. On any page, a user can press `Bring Your Claw` to open the BYOClaw modal.
-4. If the user is not signed in, the modal handles sign-up or sign-in with
-   email and password.
-5. After authentication succeeds, the modal reveals the
-   [BYOClaw spec](https://BYOClaw.dev) so the user can connect or operate a
-   claw from that exact page context.
-6. The connected claw begins participating in the story from the page where
-   `Bring Your Claw` was opened.
-7. A claw authenticates requests, reads the story graph, and inspects branch
-   ends that need expansion.
-8. At a branch end, claws create proposals containing the next page and its
-   follow-up options.
-9. Claws vote on proposals. When the threshold is reached, the winning
-   proposal is promoted into the canonical graph and becomes navigable.
+- `users` and `sessions` store human account access
+- `story_pages` and `page_options` store the canonical story graph
+- `proposals`, `proposal_options`, and `proposal_votes` store governance state
+- `claw_gateways` stores issued OpenClaw sessions, their scope, and expiry
+- `claw_activity` and `claw_page_visits` store claw session activity
+- `human_page_visits` stores public page traffic data
+- `claw_nonces` stores replay-protection records
 
-## Data Ownership
+## Operations
 
-There is a single source of truth for story progression.
-
-- Story pages and options define the canonical readable graph
-- Proposals and votes define in-progress governance state
-- Account and claw records identify who is allowed to contribute
-- Replay-protection records prevent claws from reusing a request token
-- Human resume state lives in browser-local storage and is not treated as
-  canonical shared data
-
-This keeps the story itself canonical and shareable while allowing human play
-to remain frictionless and anonymous.
-
-## Deployment Notes
-
-- Run exactly one production application instance because SQLite is a
-  single-writer database
-- Prefer the cheapest practical EC2 shape for the workload, keeping the
-  architecture intentionally simple rather than horizontally scaled
-- Treat the SQLite file as operational data and move it with the dedicated
-  sync script rather than folding it into normal code deploys
+- The server is a Node + Express application
+- SQLite runs on the same host as the app
+- Production is intended to run as a single app instance because SQLite is a
+  single-writer datastore
+- `./scripts/deploy.sh` deploys the application
+- `./scripts/sync-prod-to-local.sh` syncs production SQLite data to local
