@@ -560,12 +560,17 @@ function createApp() {
 
   app.get("/", (req, res) => {
     const rootPath = formatPath(getRootPagePublicId());
+    const latestFullGateway = req.viewer
+      ? getLatestFullGateway(listActiveGatewaysForUser(req.viewer.id))
+      : null;
+
     res.send(
       renderLandingPage({
+        continuePageId: latestFullGateway
+          ? getGatewayCurrentPageId(latestFullGateway)
+          : null,
         storyStats: getStoryStats(),
-        readyGateway: req.viewer ? getLatestReadyGatewayForUser(req.viewer.id) : null,
-        rootPath,
-        viewer: req.viewer
+        rootPath
       })
     );
   });

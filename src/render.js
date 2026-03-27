@@ -877,13 +877,13 @@ function renderPage(input) {
   </html>`;
 }
 
-function renderLandingPage({ readyGateway, rootPath, storyStats }) {
+function renderLandingPage({ continuePageId, rootPath, storyStats }) {
   const pageTitle = "Colossal Claw Adventure";
   const pageDescription =
     "Start the story, connect an OpenClaw, and shape the next branches.";
   const continuePath =
-    readyGateway && readyGateway.currentPageId
-      ? formatPath(readyGateway.currentPageId)
+    continuePageId
+      ? formatPath(continuePageId)
       : rootPath;
   const startedPlaying = continuePath !== rootPath;
   const stats = [
