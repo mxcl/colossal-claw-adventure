@@ -681,6 +681,7 @@ html[data-has-saved-story="1"] .landing-actions [data-landing-restart] {
 .button-row {
   align-items: start;
   grid-template-columns: repeat(auto-fit, minmax(180px, max-content));
+  margin-top: 0.75rem;
 }
 
 .auth-card-wide {
@@ -768,7 +769,8 @@ html[data-has-saved-story="1"] .landing-actions [data-landing-restart] {
 }
 
 .code-block {
-  overflow-x: auto;
+  overflow: auto;
+  max-height: min(24rem, 45vh);
   margin: 0.75rem 0 0;
   padding: 0.8rem;
   background: #171717;

@@ -504,10 +504,6 @@ function renderSignedOutGatewayOffer({ gateway, pageState, tokenMode, viewer }) 
     tokenMode === "long_lived"
       ? "Issue 7-Day OpenClaw Prompt"
       : "Issue 20-Minute Play Prompt";
-  const refreshLabel =
-    tokenMode === "long_lived"
-      ? "Issue Fresh 7-Day Prompt"
-      : "Issue Fresh 20-Minute Prompt";
   const offerCopy = tokenMode === "long_lived"
     ? `
         <p>
@@ -559,7 +555,9 @@ function renderSignedOutGatewayOffer({ gateway, pageState, tokenMode, viewer }) 
       ${
         activeGateway
           ? renderGatewayPromptBlock(activeGateway, pageState, viewer)
-          : `<div class="spec-card">
+          : tokenMode === "long_lived"
+            ? ""
+            : `<div class="spec-card">
               <span class="eyebrow">Prompt</span>
               <p>
                 Issue this prompt, paste it into your claw interface, and this
@@ -567,11 +565,13 @@ function renderSignedOutGatewayOffer({ gateway, pageState, tokenMode, viewer }) 
               </p>
             </div>`
       }
-      ${renderGatewayIssueButton(
-        pageState.page.id,
-        tokenMode,
-        activeGateway ? refreshLabel : issueLabel
-      )}
+      ${activeGateway
+        ? ""
+        : renderGatewayIssueButton(
+            pageState.page.id,
+            tokenMode,
+            issueLabel
+          )}
     </section>
   `;
 }
