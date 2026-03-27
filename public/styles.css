@@ -277,6 +277,18 @@ html[data-has-saved-story="1"] .landing-actions [data-landing-restart] {
   animation: landing-rise 900ms ease-out both;
 }
 
+.landing-badge:nth-child(1) {
+  margin-left: 1.5rem;
+}
+
+.landing-badge:nth-child(2) {
+  margin-left: 0;
+}
+
+.landing-badge:nth-child(3) {
+  margin-left: 2.25rem;
+}
+
 .landing-badge strong,
 .landing-badge span {
   display: block;
@@ -953,6 +965,12 @@ html[data-has-saved-story="1"] .landing-actions [data-landing-restart] {
   }
 
   .landing-stats {
+    margin-left: 0;
+  }
+
+  .landing-badge:nth-child(1),
+  .landing-badge:nth-child(2),
+  .landing-badge:nth-child(3) {
     margin-left: 0;
   }
 
