@@ -752,6 +752,9 @@ function renderPage(input) {
     pageState.page.id,
     pageState.page.humanVisitPercent
   );
+  const showBranchTrafficPercent =
+    Boolean(pageState.page.parentPageId) &&
+    pageState.page.id !== pageState.rootPageId;
   const statusTitle = readyGateway
     ? `${escapeHtml(readyGateway.clawName)} connected`
     : viewer
@@ -844,7 +847,7 @@ function renderPage(input) {
               of all human players have been to this page.
             </p>
             ${
-              pageState.page.parentPageId
+              showBranchTrafficPercent
                 ? `<p>
                     <strong>${pageState.page.humanVisitPercent}%</strong>
                     of players who reached the previous page took this branch.

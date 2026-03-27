@@ -53,6 +53,7 @@ test("story page traffic includes the current human browser", async () => {
 
     assert.equal(firstResponse.status, 200);
     assert.match(firstHtml, /<strong>1<\/strong>\s*human player has\s*reached this page\./);
+    assert.doesNotMatch(firstHtml, /of players who reached the previous page took this branch\./);
     assert.ok(setCookie);
 
     const secondResponse = await fetch(
@@ -67,6 +68,35 @@ test("story page traffic includes the current human browser", async () => {
 
     assert.equal(secondResponse.status, 200);
     assert.match(secondHtml, /<strong>1<\/strong>\s*human player has\s*reached this page\./);
+  } finally {
+    await close(server);
+  }
+});
+
+test("non-root story pages still show previous-page branch traffic", async () => {
+  const server = http.createServer(createApp());
+
+  try {
+    const address = await listen(server);
+    const rootPageId = getRootPagePublicId();
+    const firstBranchPageId = getPageState(rootPageId).options[0].targetPageId;
+
+    const rootResponse = await fetch(
+      `http://127.0.0.1:${address.port}/page/${rootPageId}`
+    );
+
+    assert.equal(rootResponse.status, 200);
+
+    const branchResponse = await fetch(
+      `http://127.0.0.1:${address.port}/page/${firstBranchPageId}`
+    );
+    const branchHtml = await branchResponse.text();
+
+    assert.equal(branchResponse.status, 200);
+    assert.match(
+      branchHtml,
+      /of players who reached the previous page took this branch\./
+    );
   } finally {
     await close(server);
   }
