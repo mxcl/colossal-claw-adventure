@@ -543,7 +543,7 @@ function renderSignedOutGatewayOffer({ gateway, pageState, tokenMode, viewer }) 
         }
         ${
           tokenMode === "long_lived"
-            ? ` Token expires ${escapeHtml(formatTime(activeGateway.expiresAt))}.`
+            ? ""
             : ` Expires ${escapeHtml(formatTime(activeGateway.expiresAt))}.`
         }
       </p>`
