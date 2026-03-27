@@ -47,14 +47,16 @@ const SQLITE_DB_PATH =
   path.join(process.cwd(), "data", "colossal-claw-adventure.sqlite");
 const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
 const VOTE_THRESHOLD = 3;
-const BYOCLAW_SPEC_VERSION = "0.1.0";
-const CLAW_GATEWAY_TTL_MINUTES = 120;
+const BYOCLAW_SPEC_VERSION = "0.2.0-alpha";
+const CLAW_GATEWAY_TTL_MINUTES = 20;
+const LONG_LIVED_CLAW_GATEWAY_TTL_DAYS = 7;
 const MAX_ACTIVE_CLAW_GATEWAYS_PER_USER = 5;
 
 module.exports = {
   BASE_URL,
   BYOCLAW_SPEC_VERSION,
   CLAW_GATEWAY_TTL_MINUTES,
+  LONG_LIVED_CLAW_GATEWAY_TTL_DAYS,
   MAX_ACTIVE_CLAW_GATEWAYS_PER_USER,
   PORT,
   SESSION_COOKIE_NAME,

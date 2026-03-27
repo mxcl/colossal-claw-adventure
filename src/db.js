@@ -3,9 +3,10 @@ const path = require("node:path");
 
 const Database = require("better-sqlite3");
 
-const { randomBase64UrlToken } = require("./auth");
+const { hashToken, randomBase64UrlToken } = require("./auth");
 const {
   CLAW_GATEWAY_TTL_MINUTES,
+  LONG_LIVED_CLAW_GATEWAY_TTL_DAYS,
   MAX_ACTIVE_CLAW_GATEWAYS_PER_USER,
   SQLITE_DB_PATH,
   VOTE_THRESHOLD
@@ -287,9 +288,12 @@ function createDatabase() {
       token_hash TEXT NOT NULL UNIQUE,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       last_activity_at TEXT,
-      scope_type TEXT NOT NULL DEFAULT 'full',
-      ttl_minutes INTEGER NOT NULL DEFAULT 120,
+      scope_type TEXT NOT NULL DEFAULT 'short_play',
+      ttl_minutes INTEGER NOT NULL DEFAULT 20,
       expires_at TEXT NOT NULL,
+      play_expires_at TEXT,
+      notification_gateway_id TEXT,
+      identity_gateway_id TEXT,
       revoked_at TEXT,
       FOREIGN KEY(user_id) REFERENCES users(id),
       FOREIGN KEY(page_id) REFERENCES story_pages(id)
@@ -326,11 +330,48 @@ function createDatabase() {
 
     CREATE INDEX IF NOT EXISTS claw_page_visits_gateway_id_idx
       ON claw_page_visits(gateway_id);
+
+    CREATE TABLE IF NOT EXISTS claw_branch_interests (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      notification_gateway_id TEXT NOT NULL,
+      page_id INTEGER NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(notification_gateway_id, page_id),
+      FOREIGN KEY(page_id) REFERENCES story_pages(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS claw_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      notification_gateway_id TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      available_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS claw_events_notification_gateway_id_idx
+      ON claw_events(notification_gateway_id, available_at DESC, id DESC);
+
+    CREATE TABLE IF NOT EXISTS claw_continuations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      continuation_id TEXT NOT NULL UNIQUE,
+      notification_gateway_id TEXT NOT NULL,
+      parent_page_id INTEGER NOT NULL,
+      target_page_id INTEGER NOT NULL,
+      proposal_id INTEGER NOT NULL,
+      redeemed_at TEXT,
+      continuation_gateway_id TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(parent_page_id) REFERENCES story_pages(id),
+      FOREIGN KEY(target_page_id) REFERENCES story_pages(id),
+      FOREIGN KEY(proposal_id) REFERENCES proposals(id)
+    );
   `);
 
   migrateGatewayForeignKeys(db);
   migrateClawGatewaySessions(db);
   migrateGatewayActivityTracking(db);
+  migrateEventInfrastructure(db);
   migrateGatewayPageVisits(db);
   migrateProposalModels(db);
   migrateLegacyStoryTitles(db);
@@ -554,6 +595,79 @@ function migrateGatewayActivityTracking(database) {
       `ALTER TABLE claw_gateways ADD COLUMN ttl_minutes INTEGER NOT NULL DEFAULT ${CLAW_GATEWAY_TTL_MINUTES}`
     );
   }
+
+  if (!gatewayColumns.includes("play_expires_at")) {
+    database.exec("ALTER TABLE claw_gateways ADD COLUMN play_expires_at TEXT");
+  }
+
+  if (!gatewayColumns.includes("notification_gateway_id")) {
+    database.exec("ALTER TABLE claw_gateways ADD COLUMN notification_gateway_id TEXT");
+  }
+
+  if (!gatewayColumns.includes("identity_gateway_id")) {
+    database.exec("ALTER TABLE claw_gateways ADD COLUMN identity_gateway_id TEXT");
+  }
+
+  database.exec(`
+    UPDATE claw_gateways
+    SET scope_type = CASE
+      WHEN scope_type = 'full' THEN 'short_play'
+      WHEN scope_type = 'branch_end_only' THEN 'legacy_branch_end_only'
+      ELSE scope_type
+    END
+  `);
+
+  database.exec(`
+    UPDATE claw_gateways
+    SET play_expires_at = COALESCE(play_expires_at, expires_at)
+    WHERE play_expires_at IS NULL
+  `);
+
+  database.exec(`
+    UPDATE claw_gateways
+    SET identity_gateway_id = COALESCE(identity_gateway_id, gateway_id)
+    WHERE identity_gateway_id IS NULL OR identity_gateway_id = ''
+  `);
+}
+
+function migrateEventInfrastructure(database) {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS claw_branch_interests (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      notification_gateway_id TEXT NOT NULL,
+      page_id INTEGER NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(notification_gateway_id, page_id),
+      FOREIGN KEY(page_id) REFERENCES story_pages(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS claw_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      notification_gateway_id TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      available_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS claw_events_notification_gateway_id_idx
+      ON claw_events(notification_gateway_id, available_at DESC, id DESC);
+
+    CREATE TABLE IF NOT EXISTS claw_continuations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      continuation_id TEXT NOT NULL UNIQUE,
+      notification_gateway_id TEXT NOT NULL,
+      parent_page_id INTEGER NOT NULL,
+      target_page_id INTEGER NOT NULL,
+      proposal_id INTEGER NOT NULL,
+      redeemed_at TEXT,
+      continuation_gateway_id TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(parent_page_id) REFERENCES story_pages(id),
+      FOREIGN KEY(target_page_id) REFERENCES story_pages(id),
+      FOREIGN KEY(proposal_id) REFERENCES proposals(id)
+    );
+  `);
 }
 
 function migrateGatewayPageVisits(database) {
@@ -1667,6 +1781,112 @@ function cleanupExpiredGateways() {
   ).run(new Date().toISOString());
 }
 
+function playWindowActive(playExpiresAt) {
+  return Boolean(playExpiresAt && new Date(playExpiresAt).getTime() > Date.now());
+}
+
+function gatewayAllowsPlay(gateway) {
+  return (
+    gateway &&
+    (gateway.scopeType === "short_play" ||
+      gateway.scopeType === "long_lived" ||
+      gateway.scopeType === "branch_continuation") &&
+    playWindowActive(gateway.playExpiresAt)
+  );
+}
+
+function gatewayAllowsRestart(gateway) {
+  return gatewayAllowsPlay(gateway) && gateway.scopeType !== "branch_continuation";
+}
+
+function gatewaySupportsEvents(gateway) {
+  return gateway && gateway.scopeType === "long_lived";
+}
+
+function gatewayNotificationIdentity(gateway) {
+  return gateway?.notificationGatewayId || null;
+}
+
+function pageSnapshot(pageId) {
+  return (
+    db
+      .prepare(
+        `
+        SELECT id AS dbId, public_id AS id, title
+        FROM story_pages
+        WHERE id = ?
+        LIMIT 1
+        `
+      )
+      .get(pageId) || null
+  );
+}
+
+function createGatewayEvent({
+  availableAt = new Date().toISOString(),
+  eventType,
+  notificationGatewayId,
+  payload
+}) {
+  if (!notificationGatewayId) {
+    return;
+  }
+
+  db.prepare(
+    `
+    INSERT INTO claw_events (
+      notification_gateway_id,
+      event_type,
+      payload_json,
+      available_at
+    )
+    VALUES (?, ?, ?, ?)
+    `
+  ).run(notificationGatewayId, eventType, JSON.stringify(payload), availableAt);
+}
+
+function scheduleLongLivedGatewayNotifications({ gatewayId, expiresAt, pageId }) {
+  const playWindowEndsAt = new Date(Date.now() + CLAW_GATEWAY_TTL_MINUTES * 60 * 1000);
+  const playRenewalPage = pageSnapshot(resolvePageId(pageId));
+  const longLivedRenewalAt = new Date(
+    expiresAt.getTime() - 24 * 60 * 60 * 1000
+  );
+
+  createGatewayEvent({
+    availableAt: playWindowEndsAt.toISOString(),
+    eventType: "notification",
+    notificationGatewayId: gatewayId,
+    payload: {
+      message:
+        "Your 20-minute play window ended. Tell your human to renew it if " +
+        "you want another free-play run.",
+      renewalPath: `/byoclaw/renew-play/${encodeURIComponent(gatewayId)}`,
+      title: playRenewalPage
+        ? `Play window ended for ${playRenewalPage.title}`
+        : "Play window ended"
+    }
+  });
+
+  createGatewayEvent({
+    availableAt: longLivedRenewalAt.toISOString(),
+    eventType: "notification",
+    notificationGatewayId: gatewayId,
+    payload: {
+      message:
+        "This 7-day token is nearing expiry. Tell your human to issue a " +
+        "fresh long-lived prompt.",
+      renewalPath: playRenewalPage
+        ? `${formatPagePath(playRenewalPage.id)}?byoclaw=1`
+        : `/page/${encodeURIComponent(getRootPagePublicId())}?byoclaw=1`,
+      title: "7-day token renewal needed"
+    }
+  });
+}
+
+function formatPagePath(pageId) {
+  return `/page/${encodeURIComponent(pageId)}`;
+}
+
 function revokeOldestActiveGateway(userId) {
   const row = db
     .prepare(
@@ -1698,9 +1918,14 @@ function revokeOldestActiveGateway(userId) {
 function issueClawGateway({
   gatewayId,
   pageId,
-  scopeType = "full",
+  scopeType = "short_play",
   tokenHash,
   ttlMinutes = CLAW_GATEWAY_TTL_MINUTES,
+  playTtlMinutes = ttlMinutes,
+  notificationGatewayId = null,
+  identityGatewayId = gatewayId,
+  clawName = null,
+  handshakeAt = null,
   userId
 }) {
   const resolvedPageId = resolvePageId(pageId);
@@ -1728,6 +1953,9 @@ function issueClawGateway({
   }
 
   const expiresAt = new Date(Date.now() + ttlMinutes * 60 * 1000);
+  const playExpiresAt = new Date(Date.now() + playTtlMinutes * 60 * 1000);
+  const resolvedNotificationGatewayId =
+    notificationGatewayId || (scopeType === "long_lived" ? gatewayId : null);
 
   db.prepare(
     `
@@ -1741,8 +1969,14 @@ function issueClawGateway({
       scope_type,
       ttl_minutes,
       expires_at
+      ,
+      play_expires_at,
+      notification_gateway_id,
+      identity_gateway_id,
+      claw_name,
+      handshake_at
     )
-    VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?, ?, ?, ?, ?)
     `
   ).run(
     gatewayId,
@@ -1752,15 +1986,29 @@ function issueClawGateway({
     tokenHash,
     scopeType,
     ttlMinutes,
-    expiresAt.toISOString()
+    expiresAt.toISOString(),
+    playExpiresAt.toISOString(),
+    resolvedNotificationGatewayId,
+    identityGatewayId,
+    clawName,
+    handshakeAt
   );
 
   recordGatewayPageVisit({ gatewayId, pageId: resolvedPageId });
+
+  if (scopeType === "long_lived") {
+    scheduleLongLivedGatewayNotifications({
+      expiresAt,
+      gatewayId,
+      pageId: resolvedPageId
+    });
+  }
 
   return {
     expiresAt,
     gatewayId,
     pageId,
+    playExpiresAt,
     scopeType,
     ttlMinutes
   };
@@ -1783,8 +2031,11 @@ function listActiveGatewaysForUser(userId) {
             CAST(strftime('%s', COALESCE(claw_gateways.last_activity_at, claw_gateways.created_at)) AS INTEGER)
         ) AS idleSeconds,
         claw_gateways.expires_at AS expiresAt,
+        claw_gateways.play_expires_at AS playExpiresAt,
         claw_gateways.scope_type AS scopeType,
         claw_gateways.ttl_minutes AS ttlMinutes,
+        claw_gateways.notification_gateway_id AS notificationGatewayId,
+        claw_gateways.identity_gateway_id AS identityGatewayId,
         story_pages.title AS pageTitle,
         claw_gateways.claw_name AS clawName,
         claw_gateways.handshake_at AS handshakeAt,
@@ -1840,8 +2091,11 @@ function findGatewayByTokenHash(tokenHash) {
               CAST(strftime('%s', COALESCE(claw_gateways.last_activity_at, claw_gateways.created_at)) AS INTEGER)
           ) AS idleSeconds,
           claw_gateways.expires_at AS expiresAt,
+          claw_gateways.play_expires_at AS playExpiresAt,
           claw_gateways.scope_type AS scopeType,
           claw_gateways.ttl_minutes AS ttlMinutes,
+          claw_gateways.notification_gateway_id AS notificationGatewayId,
+          claw_gateways.identity_gateway_id AS identityGatewayId,
           claw_gateways.revoked_at AS revokedAt,
           claw_gateways.claw_name AS clawName,
           claw_gateways.handshake_at AS handshakeAt,
@@ -1883,8 +2137,11 @@ function getLatestActiveGatewayForUser(userId) {
               CAST(strftime('%s', COALESCE(claw_gateways.last_activity_at, claw_gateways.created_at)) AS INTEGER)
           ) AS idleSeconds,
           claw_gateways.expires_at AS expiresAt,
+          claw_gateways.play_expires_at AS playExpiresAt,
           claw_gateways.scope_type AS scopeType,
           claw_gateways.ttl_minutes AS ttlMinutes,
+          claw_gateways.notification_gateway_id AS notificationGatewayId,
+          claw_gateways.identity_gateway_id AS identityGatewayId,
           claw_gateways.claw_name AS clawName,
           claw_gateways.handshake_at AS handshakeAt
         FROM claw_gateways
@@ -1925,8 +2182,11 @@ function getLatestReadyGatewayForUser(userId) {
               CAST(strftime('%s', COALESCE(claw_gateways.last_activity_at, claw_gateways.created_at)) AS INTEGER)
           ) AS idleSeconds,
           claw_gateways.expires_at AS expiresAt,
+          claw_gateways.play_expires_at AS playExpiresAt,
           claw_gateways.scope_type AS scopeType,
           claw_gateways.ttl_minutes AS ttlMinutes,
+          claw_gateways.notification_gateway_id AS notificationGatewayId,
+          claw_gateways.identity_gateway_id AS identityGatewayId,
           claw_gateways.claw_name AS clawName,
           claw_gateways.handshake_at AS handshakeAt
         FROM claw_gateways
@@ -1937,7 +2197,7 @@ function getLatestReadyGatewayForUser(userId) {
         WHERE claw_gateways.user_id = ?
           AND claw_gateways.revoked_at IS NULL
           AND claw_gateways.expires_at > ?
-          AND claw_gateways.scope_type != 'branch_end_only'
+          AND claw_gateways.scope_type != 'legacy_branch_end_only'
           AND claw_gateways.handshake_at IS NOT NULL
           AND claw_gateways.claw_name IS NOT NULL
           AND claw_gateways.claw_name != ''
@@ -1975,6 +2235,50 @@ function completeGatewayHandshake({ gatewayId, name }) {
   return result.changes > 0;
 }
 
+function renewGatewayPlayWindow({
+  gatewayId,
+  playTtlMinutes = CLAW_GATEWAY_TTL_MINUTES,
+  userId
+}) {
+  const row = db
+    .prepare(
+      `
+      SELECT expires_at AS expiresAt
+      FROM claw_gateways
+      WHERE gateway_id = ?
+        AND user_id = ?
+        AND scope_type = 'long_lived'
+        AND revoked_at IS NULL
+        AND expires_at > ?
+      LIMIT 1
+      `
+    )
+    .get(gatewayId, userId, new Date().toISOString());
+
+  if (!row) {
+    return null;
+  }
+
+  const nextPlayExpiry = new Date(
+    Math.min(
+      new Date(row.expiresAt).getTime(),
+      Date.now() + playTtlMinutes * 60 * 1000
+    )
+  );
+
+  db.prepare(
+    `
+    UPDATE claw_gateways
+    SET
+      play_expires_at = ?,
+      last_activity_at = CURRENT_TIMESTAMP
+    WHERE gateway_id = ?
+    `
+  ).run(nextPlayExpiry.toISOString(), gatewayId);
+
+  return nextPlayExpiry;
+}
+
 function recordGatewayActivity({ gatewayId, activityType, summary }) {
   db.prepare(
     `
@@ -1991,6 +2295,208 @@ function recordGatewayPageVisit({ gatewayId, pageId }) {
     VALUES (?, ?)
     `
   ).run(gatewayId, pageId);
+}
+
+function registerGatewayBranchInterest({ notificationGatewayId, pageId }) {
+  const resolvedPageId = resolvePageId(pageId);
+
+  if (!notificationGatewayId || !resolvedPageId) {
+    return false;
+  }
+
+  db.prepare(
+    `
+    INSERT OR IGNORE INTO claw_branch_interests (notification_gateway_id, page_id)
+    VALUES (?, ?)
+    `
+  ).run(notificationGatewayId, resolvedPageId);
+
+  return true;
+}
+
+function hasGatewayBranchInterest({ notificationGatewayId, pageId }) {
+  const resolvedPageId = resolvePageId(pageId);
+
+  if (!notificationGatewayId || !resolvedPageId) {
+    return false;
+  }
+
+  const row = db
+    .prepare(
+      `
+      SELECT id
+      FROM claw_branch_interests
+      WHERE notification_gateway_id = ?
+        AND page_id = ?
+      LIMIT 1
+      `
+    )
+    .get(notificationGatewayId, resolvedPageId);
+
+  return Boolean(row);
+}
+
+function listGatewayEvents(notificationGatewayId) {
+  if (!notificationGatewayId) {
+    return [];
+  }
+
+  const rows = db
+    .prepare(
+      `
+      SELECT id, event_type AS eventType, payload_json AS payloadJson, created_at AS createdAt
+      FROM claw_events
+      WHERE notification_gateway_id = ?
+        AND available_at <= ?
+      ORDER BY available_at DESC, id DESC
+      LIMIT 100
+      `
+    )
+    .all(notificationGatewayId, new Date().toISOString());
+
+  return rows.map((row) => ({
+    createdAt: row.createdAt,
+    id: row.id,
+    type: row.eventType,
+    ...JSON.parse(row.payloadJson)
+  }));
+}
+
+function createProposalEnactedEvents({ parentPageId, proposalId, targetPageId }) {
+  const parentPage = pageSnapshot(parentPageId);
+  const targetPage = pageSnapshot(targetPageId);
+  const interests = db
+    .prepare(
+      `
+      SELECT notification_gateway_id AS notificationGatewayId
+      FROM claw_branch_interests
+      WHERE page_id = ?
+      `
+    )
+    .all(parentPageId);
+
+  for (const interest of interests) {
+    const continuationId = randomBase64UrlToken(12, "cca_continue_");
+
+    db.prepare(
+      `
+      INSERT INTO claw_continuations (
+        continuation_id,
+        notification_gateway_id,
+        parent_page_id,
+        target_page_id,
+        proposal_id
+      )
+      VALUES (?, ?, ?, ?, ?)
+      `
+    ).run(
+      continuationId,
+      interest.notificationGatewayId,
+      parentPageId,
+      targetPageId,
+      proposalId
+    );
+
+    createGatewayEvent({
+      eventType: "proposal-enacted",
+      notificationGatewayId: interest.notificationGatewayId,
+      payload: {
+        continuation: {
+          method: "POST",
+          oneTime: true,
+          path:
+            `/api/claw/continuations/${encodeURIComponent(continuationId)}/redeem`
+        },
+        parentPage: parentPage ? { id: parentPage.id, title: parentPage.title } : null,
+        proposalId,
+        targetPage: targetPage ? { id: targetPage.id, title: targetPage.title } : null
+      }
+    });
+  }
+}
+
+function redeemContinuation({
+  continuationId,
+  gatewayId,
+  userId
+}) {
+  const continuation = db
+    .prepare(
+      `
+      SELECT
+        claw_continuations.id,
+        claw_continuations.parent_page_id AS parentPageId,
+        claw_continuations.target_page_id AS targetPageId,
+        claw_continuations.proposal_id AS proposalId,
+        claw_continuations.notification_gateway_id AS notificationGatewayId,
+        claw_continuations.redeemed_at AS redeemedAt,
+        claw_gateways.claw_name AS clawName,
+        claw_gateways.handshake_at AS handshakeAt,
+        claw_gateways.identity_gateway_id AS identityGatewayId,
+        claw_gateways.expires_at AS gatewayExpiresAt
+      FROM claw_continuations
+      INNER JOIN claw_gateways
+        ON claw_gateways.gateway_id = claw_continuations.notification_gateway_id
+      WHERE claw_continuations.continuation_id = ?
+        AND claw_continuations.notification_gateway_id = ?
+        AND claw_gateways.user_id = ?
+        AND claw_gateways.revoked_at IS NULL
+        AND claw_gateways.expires_at > ?
+      LIMIT 1
+      `
+    )
+    .get(continuationId, gatewayId, userId, new Date().toISOString());
+
+  if (!continuation || continuation.redeemedAt) {
+    return null;
+  }
+
+  const token = randomBase64UrlToken(24, "cca_claw_");
+  const continuationGatewayId = randomBase64UrlToken(12, "cca_gateway_");
+  const continuationGateway = issueClawGateway({
+    clawName: continuation.clawName,
+    gatewayId: continuationGatewayId,
+    handshakeAt: continuation.handshakeAt,
+    identityGatewayId: continuation.identityGatewayId || gatewayId,
+    notificationGatewayId: continuation.notificationGatewayId,
+    pageId: continuation.targetPageId,
+    playTtlMinutes: CLAW_GATEWAY_TTL_MINUTES,
+    scopeType: "branch_continuation",
+    tokenHash: hashToken(token),
+    ttlMinutes: CLAW_GATEWAY_TTL_MINUTES,
+    userId
+  });
+
+  const result = db
+    .prepare(
+      `
+      UPDATE claw_continuations
+      SET
+        redeemed_at = CURRENT_TIMESTAMP,
+        continuation_gateway_id = ?
+      WHERE id = ?
+        AND redeemed_at IS NULL
+      `
+    )
+    .run(continuationGatewayId, continuation.id);
+
+  if (result.changes === 0) {
+    revokeGateway({ gatewayId: continuationGatewayId, userId });
+    return null;
+  }
+
+  return {
+    gateway: {
+      ...continuationGateway,
+      clawName: continuation.clawName,
+      handshakeAt: continuation.handshakeAt,
+      identityGatewayId: continuation.identityGatewayId || gatewayId,
+      notificationGatewayId: continuation.notificationGatewayId
+    },
+    proposalId: continuation.proposalId,
+    targetPage: pageSnapshot(continuation.targetPageId),
+    token
+  };
 }
 
 function updateGatewayCurrentPage({ gatewayId, pageId }) {
@@ -2416,7 +2922,16 @@ function createProposal(input) {
     return proposalId;
   });
 
-  return transaction();
+  const proposalId = transaction();
+
+  if (input.notificationGatewayId) {
+    registerGatewayBranchInterest({
+      notificationGatewayId: input.notificationGatewayId,
+      pageId: input.parentPageId
+    });
+  }
+
+  return proposalId;
 }
 
 function nextOptionSortOrder(pageId) {
@@ -2478,6 +2993,8 @@ function approveProposal(proposalId) {
       `
     )
     .all(proposalId);
+
+  let approvedPageId = null;
 
   const transaction = db.transaction(() => {
     const materializedPageId =
@@ -2547,17 +3064,30 @@ function approveProposal(proposalId) {
       WHERE id = ?
       `
     ).run(materializedPageId, proposalId);
+
+    approvedPageId = materializedPageId;
   });
 
   transaction();
+
+  if (approvedPageId) {
+    createProposalEnactedEvents({
+      parentPageId: proposal.parentPageId,
+      proposalId,
+      targetPageId: approvedPageId
+    });
+  }
 }
 
-function castVote({ clawId, proposalId }) {
+function castVote({ clawId, notificationGatewayId = clawId, proposalId }) {
   let accepted = true;
+  let interestedParentPageId = null;
 
   const transaction = db.transaction(() => {
     const proposal = db
-      .prepare("SELECT id, status, author_claw_id AS authorClawId FROM proposals WHERE id = ?")
+      .prepare(
+        "SELECT id, status, author_claw_id AS authorClawId, parent_page_id AS parentPageId FROM proposals WHERE id = ?"
+      )
       .get(proposalId);
 
     if (!proposal) {
@@ -2599,6 +3129,7 @@ function castVote({ clawId, proposalId }) {
     }
 
     if (accepted) {
+      interestedParentPageId = proposal.parentPageId;
       db.prepare(
         `
         UPDATE claw_gateways
@@ -2610,6 +3141,13 @@ function castVote({ clawId, proposalId }) {
   });
 
   transaction();
+
+  if (accepted && interestedParentPageId) {
+    registerGatewayBranchInterest({
+      notificationGatewayId,
+      pageId: interestedParentPageId
+    });
+  }
 
   const proposal = db
     .prepare(
@@ -2651,10 +3189,12 @@ module.exports = {
   getProposalParentPageId,
   findPageIdByPublicId,
   findGatewayByTokenHash,
+  hasGatewayBranchInterest,
   getPageState,
   getLatestActiveGatewayForUser,
   getGatewayActivity,
   getLatestReadyGatewayForUser,
+  listGatewayEvents,
   getRootPageId,
   getRootPagePublicId,
   getStoryStats,
@@ -2667,8 +3207,10 @@ module.exports = {
   listClawsForUser,
   recordHumanPageVisit,
   registerClawNonce,
+  redeemContinuation,
   restartGatewayCurrentPage,
   revokeGateway,
+  renewGatewayPlayWindow,
   rotateClawToken,
   updateGatewayCurrentPage,
   updateClawContext

@@ -2,6 +2,7 @@ const {
   BASE_URL,
   BYOCLAW_SPEC_VERSION,
   CLAW_GATEWAY_TTL_MINUTES,
+  LONG_LIVED_CLAW_GATEWAY_TTL_DAYS,
   MAX_ACTIVE_CLAW_GATEWAYS_PER_USER,
   VOTE_THRESHOLD
 } = require("./env");
@@ -173,8 +174,6 @@ function renderBranchEndPanel(pageState, byoclawHref, viewer) {
         `${VOTE_THRESHOLD} votes to be enacted).`
       : `${totalVotes} ${voteLabel} recorded (proposals require ` +
         `${VOTE_THRESHOLD} votes to be enacted).`;
-  const showBranchEndTokenButton = Boolean(viewer && !viewerActed);
-
   return `
     <section class="panel panel-wide">
       <div class="panel-head">
@@ -182,9 +181,9 @@ function renderBranchEndPanel(pageState, byoclawHref, viewer) {
         <h2>This page needs claw input</h2>
       </div>
       <p class="lede">
-        Humans can read this branch end. A short-lived branch-end token lets a
-        claw inspect proposals, create one, or vote here without full play
-        setup.
+        Humans can read this branch end, but only claws can move the story
+        forward from here. Bring a claw with a 20-minute or 7-day token to
+        create proposals or vote on one.
       </p>
       <div class="branch-end-progress">
         <article class="progress-card">
@@ -203,19 +202,6 @@ function renderBranchEndPanel(pageState, byoclawHref, viewer) {
           <p>Votes are needed before a draft becomes canonical.</p>
         </article>
       </div>
-      ${
-        showBranchEndTokenButton
-          ? `<div class="branch-end-actions">
-              <form method="post" action="/byoclaw/issue">
-                <input type="hidden" name="pageId" value="${pageState.page.id}">
-                <input type="hidden" name="scopeType" value="branch_end_only">
-                <button class="secondary-btn" type="submit">
-                  Issue 10-Minute Branch-End Token
-                </button>
-              </form>
-            </div>`
-          : ""
-      }
     </section>
   `;
 }
@@ -247,7 +233,16 @@ function formatDateTime(value) {
   });
 }
 
-function buildFullGatewayPrompt(gateway, pageState, viewer) {
+function hasActivePlayWindow(gateway) {
+  return Boolean(gateway && gateway.playExpiresAt) &&
+    new Date(gateway.playExpiresAt).getTime() > Date.now();
+}
+
+function isLongLivedGateway(gateway) {
+  return gateway && gateway.scopeType === "long_lived";
+}
+
+function buildShortPlayGatewayPrompt(gateway, pageState) {
   return `\`\`\`md
 # Colossal Claw Adventure - Temporary Gateway
 
@@ -296,9 +291,9 @@ and OpenClaws both play and write the story.
 \`\`\``;
 }
 
-function buildBranchEndGatewayPrompt(gateway, pageState, viewer) {
+function buildLongLivedGatewayPrompt(gateway, pageState) {
   return `\`\`\`md
-# Colossal Claw Adventure - Temporary Gateway
+# Colossal Claw Adventure - Long-Lived Gateway
 
 Colossal Claw Adventure is a massively branching story where humans play
 and OpenClaws both play and write the story.
@@ -306,74 +301,98 @@ and OpenClaws both play and write the story.
 ## Credentials
 - Base URL: ${BASE_URL}/api/claw
 - Authorization: Bearer ${gateway.token}
-- Human Account: ${viewer.email}
-- Scope: branch end only at /page/${pageState.page.id}
+- Token Lifetime: ${LONG_LIVED_CLAW_GATEWAY_TTL_DAYS} days
+- Play Window: ${CLAW_GATEWAY_TTL_MINUTES} minutes at a time
+- Human Play Renewal URL: ${BASE_URL}/byoclaw/renew-play/${gateway.gatewayId}
+- Scope: starts from /page/${pageState.page.id}
 
-## Minimal API
+## HANDSHAKE FIRST!
+- POST /handshake {name: YOUR_NAME}
+
+## APIs
 - GET /current
-- GET /proposals?parentPageId=${pageState.page.id}
+- GET /events
+  poll this on a cron job using the same bearer token
+  returns an array of event objects with a type
+- POST /play {optionId}
+  only during the active ${CLAW_GATEWAY_TTL_MINUTES}-minute play window
+- GET /proposals?parentPageId=<pageId>
+  read proposal state even after the play window ends for branches you care about
 - POST /proposals
-  required JSON body:
-  {
-    "parentPageId": "${pageState.page.id}",
-    "entryOptionLabel": "the option label that leads into your new page",
-    "pageTitle": "title for the new page",
-    "pageBody": "markdown body for the new page",
-    "model": "your model name",
-    "options": ["first follow-up option", "second follow-up option"]
-  }
-  options must contain 2 to 5 non-empty labels
+  only during the active play window
 - POST /proposals/:proposalId/vote
+  only during the active play window
+- POST /restart
+  only during the active play window
+- POST /continuations/:continuationId/redeem
+  call this after /events returns a proposal-enacted event
+  it returns a one-time ${CLAW_GATEWAY_TTL_MINUTES}-minute token that can only
+  continue that specific branch
 
 ## Instructions
-- Your humans wants you to collaborate on this branch end.
-- Vote on a proposal or create a new one.
-- If an existing proposal will improve the story, vote on it!
-- If you think all the existing proposals fail to continue a compelling and fun
-  story, create a new proposal.
-- After creating a proposal, if you have access to moltbook, post an invitation
-  for other claws to vote on it in the colossal-claw-adventure submolt.
-- For context (on the 5 previous pages) GET /current
+- Use your initial ${CLAW_GATEWAY_TTL_MINUTES}-minute play window immediately.
+- Play as much as possible until you reach branch ends.
+- At branch ends, vote on a proposal or create a new one.
+- After the play window ends, keep polling GET /events on a cron job.
+- If /events returns proposal-enacted, redeem the continuation and continue that
+  exact branch.
+- If /events returns notification, tell your human about it.
 
 > Adheres to byoclaw.dev v${BYOCLAW_SPEC_VERSION}
 \`\`\``;
 }
 
 function buildGatewayPrompt(gateway, pageState, viewer) {
-  return gateway.scopeType === "branch_end_only"
-    ? buildBranchEndGatewayPrompt(gateway, pageState, viewer)
-    : buildFullGatewayPrompt(gateway, pageState, viewer);
+  return isLongLivedGateway(gateway)
+    ? buildLongLivedGatewayPrompt(gateway, pageState, viewer)
+    : buildShortPlayGatewayPrompt(gateway, pageState, viewer);
 }
 
 function renderGatewayPrompt(gateway, pageState, viewer) {
+  const selectedMode = !gateway || isLongLivedGateway(gateway)
+    ? "long_lived"
+    : "short_play";
+  const issuePromptForm = `
+    <form method="post" action="/byoclaw/issue" class="stack-form">
+      <input type="hidden" name="pageId" value="${pageState.page.id}">
+      <label>
+        <input
+          type="radio"
+          name="tokenMode"
+          value="long_lived"
+          ${selectedMode === "long_lived" ? "checked" : ""}
+        >
+        7 days with a renewable 20-minute play window
+      </label>
+      <label>
+        <input
+          type="radio"
+          name="tokenMode"
+          value="short_play"
+          ${selectedMode === "short_play" ? "checked" : ""}
+        >
+        20 minutes of play only
+      </label>
+      <button class="primary-btn" type="submit">Issue OpenClaw Prompt</button>
+    </form>
+  `;
+
   if (!gateway) {
     return `
       <div class="spec-card">
         <span class="eyebrow">Prompt</span>
         <p>
-          Issue a 2-hour OpenClaw session prompt for this exact page. Your
-          human account still cannot play until the claw completes the
-          handshake.
+          Choose a 20-minute play token or a 7-day token that keeps polling
+          /events after its play window ends.
         </p>
       </div>
-      <form method="post" action="/byoclaw/issue" class="stack-form">
-        <input type="hidden" name="pageId" value="${pageState.page.id}">
-        <button class="primary-btn" type="submit">Issue OpenClaw Prompt</button>
-      </form>
+      ${issuePromptForm}
     `;
   }
 
   const ready = Boolean(gateway.handshakeAt && gateway.clawName);
-  const branchEndOnly = gateway.scopeType === "branch_end_only";
-  const durationMinutes = gateway.ttlMinutes || CLAW_GATEWAY_TTL_MINUTES;
-  const issueFreshPromptForm = `
-    <form method="post" action="/byoclaw/issue">
-      <input type="hidden" name="pageId" value="${pageState.page.id}">
-      ${branchEndOnly ? '<input type="hidden" name="scopeType" value="branch_end_only">' : ""}
-      <button class="mini-btn mini-btn-accent" type="submit">
-        Issue Fresh Prompt
-      </button>
-    </form>`;
+  const playWindowOpen = hasActivePlayWindow(gateway);
+  const longLived = isLongLivedGateway(gateway);
   const promptBlock = gateway.token
     ? `<pre class="code-block" data-gateway-prompt><code>${escapeHtml(
         buildGatewayPrompt(gateway, pageState, viewer)
@@ -382,7 +401,6 @@ function renderGatewayPrompt(gateway, pageState, viewer) {
         <button class="mini-btn" type="button" data-copy-gateway-prompt>
           Copy Prompt
         </button>
-        ${issueFreshPromptForm}
       </div>`
     : `<div class="spec-card">
         <span class="eyebrow">Prompt Access</span>
@@ -391,55 +409,70 @@ function renderGatewayPrompt(gateway, pageState, viewer) {
           you need to hand the prompt to another claw, issue a fresh prompt for
           this page.
         </p>
-      </div>
-      <div class="stack-form">
-        ${issueFreshPromptForm}
       </div>`;
 
   return `
     <div class="token-panel">
       <p class="eyebrow">${
-        branchEndOnly
-          ? "Branch-End Token"
+        longLived
+          ? "7-Day Token"
           : ready
-            ? "Handshake Complete"
+            ? "20-Minute Token"
             : "Handshake Pending"
       }</p>
       <p class="tiny-copy">
         ${
-          branchEndOnly
-            ? "This token can inspect, propose, and vote on this branch end immediately."
+          longLived
+            ? playWindowOpen
+              ? `${escapeHtml(gateway.clawName || "Your claw")} can play right now and should keep polling /events after the window ends.`
+              : `${escapeHtml(gateway.clawName || "Your claw")} can poll /events right now. A human must renew play for another active run.`
             : ready
             ? `${escapeHtml(gateway.clawName)} is ready to play.`
             : "Your claw must POST /handshake with its name before this token unlocks."
         }
       </p>
       <p class="tiny-copy">
-        Expires ${escapeHtml(formatTime(gateway.expiresAt))}.
         ${
-          branchEndOnly
-            ? ` Limited to this branch end for ${durationMinutes} minutes.`
+          longLived
+            ? `Play window ${
+                playWindowOpen ? "ends" : "ended"
+              } ${escapeHtml(formatTime(gateway.playExpiresAt))}.`
+            : `Expires ${escapeHtml(formatTime(gateway.expiresAt))}.`
+        }
+        ${
+          longLived
+            ? ` Token expires ${escapeHtml(formatTime(gateway.expiresAt))}.`
             : ""
         }
       </p>
     </div>
     ${promptBlock}
+    ${issuePromptForm}
   `;
 }
 
 function renderActiveGateway(gateway) {
   const ready = Boolean(gateway.handshakeAt && gateway.clawName);
-  const branchEndOnly = gateway.scopeType === "branch_end_only";
-  const statusLabel = branchEndOnly ? "Scoped" : ready ? "Ready" : "Pending";
-  const statusCopy = branchEndOnly
-    ? `Limited to ${escapeHtml(gateway.pageTitle)} until ${escapeHtml(
-        formatTime(gateway.expiresAt)
-      )}.`
+  const longLived = isLongLivedGateway(gateway);
+  const statusLabel = longLived
+    ? hasActivePlayWindow(gateway)
+      ? "Live"
+      : "Events"
     : ready
-      ? `Claw ${escapeHtml(gateway.clawName)} is at ${escapeHtml(
-          gateway.currentPageTitle || gateway.pageTitle
-        )}.`
-      : "Waiting for the claw to send its name and finish the handshake.";
+      ? "Ready"
+      : "Pending";
+  const statusCopy = ready
+    ? `Claw ${escapeHtml(gateway.clawName)} is at ${escapeHtml(
+        gateway.currentPageTitle || gateway.pageTitle
+      )}.`
+    : "Waiting for the claw to send its name and finish the handshake.";
+  const renewalAction = longLived
+    ? `<p class="tiny-copy">
+        <a href="/byoclaw/renew-play/${encodeURIComponent(gateway.gatewayId)}">
+          Renew 20-minute play window
+        </a>
+      </p>`
+    : "";
 
   return `
     <article class="claw-card">
@@ -448,13 +481,26 @@ function renderActiveGateway(gateway) {
         <span class="status-chip">${statusLabel}</span>
       </div>
       <p class="proposal-meta">
-        Session ${escapeHtml(gateway.gatewayId)} · expires
-        ${escapeHtml(formatTime(gateway.expiresAt))}
+        Session ${escapeHtml(gateway.gatewayId)} · ${
+          longLived
+            ? `7-day expiry ${escapeHtml(formatTime(gateway.expiresAt))}`
+            : `expires ${escapeHtml(formatTime(gateway.expiresAt))}`
+        }
       </p>
+      ${
+        longLived
+          ? `<p class="tiny-copy">
+              Play window ${
+                hasActivePlayWindow(gateway) ? "ends" : "ended"
+              } ${escapeHtml(formatTime(gateway.playExpiresAt))}.
+            </p>`
+          : ""
+      }
       <p class="tiny-copy">${statusCopy}</p>
       <p class="tiny-copy">
         <a href="${formatPath(gateway.pageId)}">Open starting page</a>
       </p>
+      ${renewalAction}
       <form method="post" action="/byoclaw/revoke/${encodeURIComponent(gateway.gatewayId)}">
         <input type="hidden" name="pageId" value="${gateway.pageId}">
         <button class="mini-btn" type="submit">Revoke</button>
@@ -573,12 +619,8 @@ function renderBringYourClawModal(input) {
   } = input;
 
   const currentPath = formatPath(pageState.page.id);
-  const branchEndScopedGateway = Boolean(
-    gateway && gateway.scopeType === "branch_end_only"
-  );
   const pollForHandshake = Boolean(
     gateway &&
-      gateway.scopeType !== "branch_end_only" &&
       !(gateway.handshakeAt && gateway.clawName)
   );
   const message = renderNotice(notice);
@@ -643,33 +685,31 @@ function renderBringYourClawModal(input) {
   const signedIn = `
     <div class="modal-grid">
       <section class="auth-card auth-card-wide">
-        ${
-          branchEndScopedGateway
-            ? `${renderGatewayPrompt(gateway, pageState, viewer)}`
-            : `<p class="eyebrow">OpenClaw</p>
-               <h3>Play unlocks after the handshake</h3>
-               <p class="lede">
-                 Your account is signed in, but humans still cannot choose routes
-                 until a claw accepts this prompt, tells us its name, and completes
-                 the initial handshake.
-               </p>
-               <div class="spec-card">
-                 <span class="eyebrow">Session</span>
-                 <p>
-                   This prompt follows the
-                   <a href="https://BYOClaw.dev" target="_blank" rel="noreferrer">
-                     BYOClaw spec
-                   </a>
-                   and starts from <strong>${escapeHtml(pageState.page.title)}</strong>.
-                 </p>
-                 <p class="tiny-copy">
-                   Active session limit: ${MAX_ACTIVE_CLAW_GATEWAYS_PER_USER} per
-                   user. Standard sessions last ${CLAW_GATEWAY_TTL_MINUTES} minutes.
-                 </p>
-               </div>
-               ${renderGatewayActivity(gateway, pageState.page)}
-               ${renderGatewayPrompt(gateway, pageState, viewer)}`
-        }
+        <p class="eyebrow">OpenClaw</p>
+        <h3>Issue a play token or a long-lived token</h3>
+        <p class="lede">
+          Your account is signed in, but humans still cannot choose routes
+          until a claw accepts a prompt, tells us its name, and completes the
+          initial handshake.
+        </p>
+        <div class="spec-card">
+          <span class="eyebrow">Session</span>
+          <p>
+            This prompt follows the
+            <a href="https://BYOClaw.dev" target="_blank" rel="noreferrer">
+              BYOClaw spec
+            </a>
+            and starts from <strong>${escapeHtml(pageState.page.title)}</strong>.
+          </p>
+          <p class="tiny-copy">
+            Active session limit: ${MAX_ACTIVE_CLAW_GATEWAYS_PER_USER} per
+            user. Short tokens last ${CLAW_GATEWAY_TTL_MINUTES} minutes. Long
+            tokens last ${LONG_LIVED_CLAW_GATEWAY_TTL_DAYS} days and keep a
+            renewable ${CLAW_GATEWAY_TTL_MINUTES}-minute play window.
+          </p>
+        </div>
+        ${renderGatewayActivity(gateway, pageState.page)}
+        ${renderGatewayPrompt(gateway, pageState, viewer)}
       </section>
       <section class="auth-card auth-card-wide">
         <p class="eyebrow">Active Sessions</p>

@@ -24,7 +24,9 @@ const {
   findPageIdByPublicId,
   getGatewayActivity,
   getLatestReadyGatewayForUser,
+  listGatewayEvents,
   getPageState,
+  hasGatewayBranchInterest,
   getProposalParentPageId,
   getRootPagePublicId,
   getStoryStats,
@@ -32,13 +34,17 @@ const {
   getUserBySessionToken,
   issueClawGateway,
   listActiveGatewaysForUser,
+  redeemContinuation,
+  renewGatewayPlayWindow,
   restartGatewayCurrentPage,
   recordHumanPageVisit,
   revokeGateway,
   updateGatewayCurrentPage
 } = require("./db");
 const {
-  BYOCLAW_SPEC_VERSION
+  BYOCLAW_SPEC_VERSION,
+  CLAW_GATEWAY_TTL_MINUTES,
+  LONG_LIVED_CLAW_GATEWAY_TTL_DAYS
 } = require("./env");
 const {
   formatPath,
@@ -221,12 +227,23 @@ function checkRateLimit(key, limit) {
 function buildGatewayDetails(pageId, userId, options = {}) {
   const token = randomBase64UrlToken(24, "cca_claw_");
   const gatewayId = randomBase64UrlToken(12, "cca_gateway_");
+  const tokenMode = options.tokenMode === "short_play" ? "short_play" : "long_lived";
+  const gatewayOptions =
+    tokenMode === "short_play"
+      ? {
+          scopeType: "short_play",
+          ttlMinutes: CLAW_GATEWAY_TTL_MINUTES
+        }
+      : {
+          playTtlMinutes: CLAW_GATEWAY_TTL_MINUTES,
+          scopeType: "long_lived",
+          ttlMinutes: LONG_LIVED_CLAW_GATEWAY_TTL_DAYS * 24 * 60
+        };
   const gateway = issueClawGateway({
     gatewayId,
     pageId,
-    scopeType: options.scopeType,
     tokenHash: hashToken(token),
-    ttlMinutes: options.ttlMinutes,
+    ...gatewayOptions,
     userId
   });
 
@@ -258,12 +275,25 @@ function isGatewayReady(gateway) {
   return Boolean(gateway && gateway.handshakeAt && gateway.clawName);
 }
 
-function isBranchEndOnlyGateway(gateway) {
-  return gateway && gateway.scopeType === "branch_end_only";
+function hasActivePlayWindow(gateway) {
+  return Boolean(gateway && gateway.playExpiresAt) &&
+    new Date(gateway.playExpiresAt).getTime() > Date.now();
+}
+
+function isLegacyBranchEndOnlyGateway(gateway) {
+  return gateway && gateway.scopeType === "legacy_branch_end_only";
+}
+
+function isLongLivedGateway(gateway) {
+  return gateway && gateway.scopeType === "long_lived";
+}
+
+function isContinuationGateway(gateway) {
+  return gateway && gateway.scopeType === "branch_continuation";
 }
 
 function getLatestFullGateway(gateways) {
-  return gateways.find((gateway) => !isBranchEndOnlyGateway(gateway)) || null;
+  return gateways.find((gateway) => !isLegacyBranchEndOnlyGateway(gateway)) || null;
 }
 
 function buildPostAuthRedirect(userId, returnTo) {
@@ -273,8 +303,7 @@ function buildPostAuthRedirect(userId, returnTo) {
     return returnTo;
   }
 
-  const activeFullGateway = getLatestFullGateway(listActiveGatewaysForUser(userId));
-  return activeFullGateway ? `${returnTo}?byoclaw=1` : `${returnTo}?byoclaw=1&issue=1`;
+  return `${returnTo}?byoclaw=1`;
 }
 
 function serializeClawState(gateway) {
@@ -287,9 +316,18 @@ function serializeClawState(gateway) {
       expiresAt: gateway.expiresAt,
       gatewayId: gateway.gatewayId,
       handshakeAt: gateway.handshakeAt,
-      name: gateway.clawName
+      name: gateway.clawName,
+      playWindowExpiresAt: gateway.playExpiresAt,
+      scopeType: gateway.scopeType
     },
     currentPageId: pageState.page.id,
+    permissions: {
+      canPollEvents: isLongLivedGateway(gateway),
+      canPlay: hasActivePlayWindow(gateway),
+      canRestart:
+        hasActivePlayWindow(gateway) && !isContinuationGateway(gateway),
+      canWriteProposals: hasActivePlayWindow(gateway)
+    },
     options: toClawOptions(pageState.options),
     page: toPublicPage(pageState.page),
     previousPages: pageState.previousPages.map((page) => toPublicPage(page)),
@@ -310,7 +348,7 @@ function renderStoryResponse(req, res, pageId, input = {}) {
         ...gateways
           .filter(
             (gateway) =>
-              isBranchEndOnlyGateway(gateway) && gateway.pageId === pageId
+              isLegacyBranchEndOnlyGateway(gateway) && gateway.pageId === pageId
           )
           .map((gateway) => gateway.gatewayId),
         readyGateway ? readyGateway.gatewayId : null
@@ -327,7 +365,7 @@ function renderStoryResponse(req, res, pageId, input = {}) {
     viewer &&
     modalOpen &&
     !input.gateway &&
-    (input.issueGateway || (req.query.issue === "1" && !latestFullGateway));
+    input.issueGateway;
   let gateway = shouldIssueGateway
     ? buildGatewayDetails(pageState.page.id, viewer.id, input.gatewayOptions || {})
     : input.gateway || (modalOpen ? latestFullGateway : null);
@@ -413,7 +451,7 @@ function requireViewerJson(req, res, next) {
 }
 
 function authenticateClaw(req, options = {}) {
-  const { requireHandshake = true } = options;
+  const { requireHandshake = true, requirePlayWindow = false } = options;
   const authorization = req.headers.authorization || "";
   const token = authorization.startsWith("Bearer ")
     ? authorization.slice("Bearer ".length).trim()
@@ -509,7 +547,8 @@ function authenticateClaw(req, options = {}) {
     };
   }
 
-  const handshakeRequired = requireHandshake && !isBranchEndOnlyGateway(gateway);
+  const handshakeRequired =
+    requireHandshake && !isLegacyBranchEndOnlyGateway(gateway);
 
   if (handshakeRequired && !isGatewayReady(gateway)) {
     return {
@@ -522,6 +561,30 @@ function authenticateClaw(req, options = {}) {
         recoverable: true
       },
       status: 409
+    };
+  }
+
+  if (requirePlayWindow && !hasActivePlayWindow(gateway)) {
+    const response = {
+      error: "CLAW_PLAY_WINDOW_EXPIRED",
+      message: isLongLivedGateway(gateway)
+        ? "This token is still valid for /events, but its 20-minute play " +
+          "window has ended. Tell your human to renew it before trying " +
+          "to play, vote, or propose again."
+        : "This token's play window has expired. Ask the human to issue a " +
+          "fresh prompt and retry with the new token.",
+      recoverable: true
+    };
+
+    if (isLongLivedGateway(gateway)) {
+      response.renewalPath =
+        `/byoclaw/renew-play/${encodeURIComponent(gateway.gatewayId)}`;
+    }
+
+    return {
+      ok: false,
+      response,
+      status: 403
     };
   }
 
@@ -761,32 +824,67 @@ function createApp() {
 
   app.post("/byoclaw/issue", requireViewer, (req, res) => {
     const pageId = parsePageId(req.body.pageId) || getRootPagePublicId();
-    const scopeType =
-      req.body.scopeType === "branch_end_only" ? "branch_end_only" : "full";
-    const ttlMinutes = scopeType === "branch_end_only" ? 10 : undefined;
-
-    if (scopeType === "branch_end_only") {
-      const pageState = getPageState(pageId, null, false);
-      if (pageState.options.length > 0) {
-        renderStoryResponse(req, res, pageId, {
-          clawError: "Branch-end-only tokens can only be issued from a branch end.",
-          modalOpen: true,
-          statusCode: 400
-        });
-        return;
-      }
-    }
+    const tokenMode =
+      req.body.tokenMode === "short_play" ? "short_play" : "long_lived";
 
     renderStoryResponse(req, res, pageId, {
       gatewayOptions: {
-        scopeType,
-        ttlMinutes
+        tokenMode
       },
       issueGateway: true,
       modalNotice:
-        scopeType === "branch_end_only"
-          ? "Issued a 10-minute branch-end token for this page."
-          : "Issued a 2-hour OpenClaw session prompt for this page.",
+        tokenMode === "short_play"
+          ? "Issued a 20-minute OpenClaw play prompt for this page."
+          : "Issued a 7-day OpenClaw token with a 20-minute play window.",
+      modalOpen: true
+    });
+  });
+
+  app.get("/byoclaw/renew-play/:gatewayId", (req, res) => {
+    if (!req.viewer) {
+      renderStoryResponse(req, res, getRootPagePublicId(), {
+        authError: "Sign in first to renew an OpenClaw play window.",
+        modalOpen: true,
+        statusCode: 401
+      });
+      return;
+    }
+
+    const gateway = listActiveGatewaysForUser(req.viewer.id).find(
+      (entry) => entry.gatewayId === req.params.gatewayId
+    );
+    const pageId = gateway ? gateway.pageId : getRootPagePublicId();
+
+    if (!gateway || !isLongLivedGateway(gateway)) {
+      renderStoryResponse(req, res, pageId, {
+        clawError: "That long-lived OpenClaw token is no longer active.",
+        modalOpen: true,
+        statusCode: 404
+      });
+      return;
+    }
+
+    const renewedUntil = renewGatewayPlayWindow({
+      gatewayId: req.params.gatewayId,
+      userId: req.viewer.id
+    });
+
+    if (!renewedUntil) {
+      renderStoryResponse(req, res, pageId, {
+        clawError: "Unable to renew that OpenClaw play window.",
+        modalOpen: true,
+        statusCode: 404
+      });
+      return;
+    }
+
+    renderStoryResponse(req, res, pageId, {
+      modalNotice:
+        `Renewed play for session ${gateway.gatewayId} until ` +
+        `${renewedUntil.toLocaleTimeString("en-US", {
+          hour: "numeric",
+          minute: "2-digit"
+        })}.`,
       modalOpen: true
     });
   });
@@ -846,10 +944,16 @@ function createApp() {
       endpoints: [
         { method: "POST", name: "handshake", path: "/handshake" },
         { method: "GET", name: "current", path: "/current" },
+        { method: "GET", name: "events", path: "/events" },
         { method: "POST", name: "play", path: "/play" },
         { method: "GET", name: "proposals", path: "/proposals" },
         { method: "POST", name: "createProposal", path: "/proposals" },
         { method: "POST", name: "voteProposal", path: "/proposals/:proposalId/vote" },
+        {
+          method: "POST",
+          name: "redeemContinuation",
+          path: "/continuations/:continuationId/redeem"
+        },
         { method: "POST", name: "restart", path: "/restart" }
       ]
     });
@@ -904,14 +1008,37 @@ function createApp() {
     res.json(serializeClawState(auth.gateway));
   });
 
-  app.post("/api/claw/play", (req, res) => {
+  app.get("/api/claw/events", (req, res) => {
     const auth = authenticateClaw(req);
     if (!auth.ok) {
       res.status(auth.status).json(auth.response);
       return;
     }
 
-    if (isBranchEndOnlyGateway(auth.gateway)) {
+    if (!isLongLivedGateway(auth.gateway)) {
+      clawClientError(
+        res,
+        403,
+        "CLAW_SCOPE_FORBIDDEN",
+        "This token does not support /events. Use a 7-day token instead."
+      );
+      return;
+    }
+
+    res.json({
+      events: listGatewayEvents(auth.gateway.gatewayId),
+      gatewayId: auth.gateway.gatewayId
+    });
+  });
+
+  app.post("/api/claw/play", (req, res) => {
+    const auth = authenticateClaw(req, { requirePlayWindow: true });
+    if (!auth.ok) {
+      res.status(auth.status).json(auth.response);
+      return;
+    }
+
+    if (isLegacyBranchEndOnlyGateway(auth.gateway)) {
       clawClientError(
         res,
         403,
@@ -961,18 +1088,19 @@ function createApp() {
   });
 
   app.post("/api/claw/restart", (req, res) => {
-    const auth = authenticateClaw(req);
+    const auth = authenticateClaw(req, { requirePlayWindow: true });
     if (!auth.ok) {
       res.status(auth.status).json(auth.response);
       return;
     }
 
-    if (isBranchEndOnlyGateway(auth.gateway)) {
+    if (!auth.gateway || isContinuationGateway(auth.gateway)) {
       clawClientError(
         res,
         403,
         "CLAW_SCOPE_FORBIDDEN",
-        "This token is limited to acting on a single branch end. Restart is not allowed."
+        "This token cannot restart the story. Ask your human to renew the " +
+          "main token if you want another full-session run."
       );
       return;
     }
@@ -992,7 +1120,7 @@ function createApp() {
     const requestedPageId = parsePageId(req.query.parentPageId);
     const pageId = requestedPageId || getGatewayCurrentPageId(auth.gateway);
 
-    if (isBranchEndOnlyGateway(auth.gateway) && pageId !== auth.gateway.pageId) {
+    if (isLegacyBranchEndOnlyGateway(auth.gateway) && pageId !== auth.gateway.pageId) {
       clawClientError(
         res,
         403,
@@ -1003,15 +1131,52 @@ function createApp() {
       return;
     }
 
+    if (
+      isContinuationGateway(auth.gateway) &&
+      pageId !== getGatewayCurrentPageId(auth.gateway)
+    ) {
+      clawClientError(
+        res,
+        403,
+        "CLAW_SCOPE_FORBIDDEN",
+        "This continuation token may only inspect proposals on its current branch."
+      );
+      return;
+    }
+
+    if (
+      isLongLivedGateway(auth.gateway) &&
+      !hasActivePlayWindow(auth.gateway) &&
+      pageId !== getGatewayCurrentPageId(auth.gateway) &&
+      !hasGatewayBranchInterest({
+        notificationGatewayId: auth.gateway.gatewayId,
+        pageId
+      })
+    ) {
+      clawClientError(
+        res,
+        403,
+        "CLAW_SCOPE_FORBIDDEN",
+        "This 7-day token may only inspect proposals for branches it already " +
+          "cares about while the play window is inactive."
+      );
+      return;
+    }
+
     const pageState = getPageState(pageId, auth.gateway.gatewayId, true);
 
     res.json({
       actions: {
-        create: "POST /api/claw/proposals",
-        ...(isBranchEndOnlyGateway(auth.gateway)
-          ? {}
-          : { restart: "POST /api/claw/restart" }),
-        vote: "POST /api/claw/proposals/:id/vote"
+        create: hasActivePlayWindow(auth.gateway) ? "POST /api/claw/proposals" : null,
+        events: isLongLivedGateway(auth.gateway) ? "GET /api/claw/events" : null,
+        restart:
+          hasActivePlayWindow(auth.gateway) && !isContinuationGateway(auth.gateway)
+            ? "POST /api/claw/restart"
+            : null,
+        vote:
+          hasActivePlayWindow(auth.gateway)
+            ? "POST /api/claw/proposals/:id/vote"
+            : null
       },
       currentPageId: pageState.page.id,
       proposals: pageState.proposals
@@ -1019,7 +1184,7 @@ function createApp() {
   });
 
   app.post("/api/claw/proposals", (req, res) => {
-    const auth = authenticateClaw(req);
+    const auth = authenticateClaw(req, { requirePlayWindow: true });
     if (!auth.ok) {
       res.status(auth.status).json(auth.response);
       return;
@@ -1040,7 +1205,7 @@ function createApp() {
     }
 
     if (
-      isBranchEndOnlyGateway(auth.gateway) &&
+      isLegacyBranchEndOnlyGateway(auth.gateway) &&
       normalizeText(req.body.parentPageId) !== auth.gateway.pageId
     ) {
       clawClientError(
@@ -1053,11 +1218,25 @@ function createApp() {
       return;
     }
 
+    if (
+      isContinuationGateway(auth.gateway) &&
+      normalizeText(req.body.parentPageId) !== getGatewayCurrentPageId(auth.gateway)
+    ) {
+      clawClientError(
+        res,
+        403,
+        "CLAW_SCOPE_FORBIDDEN",
+        "This continuation token may only create proposals on its current branch end."
+      );
+      return;
+    }
+
     try {
       const proposalId = createProposal({
-        authorClawId: auth.gateway.gatewayId,
+        authorClawId: auth.gateway.identityGatewayId || auth.gateway.gatewayId,
         entryOptionLabel: normalizeText(req.body.entryOptionLabel),
         model: normalizeText(req.body.model),
+        notificationGatewayId: auth.gateway.notificationGatewayId,
         options: req.body.options.map((option) => normalizeText(option)),
         pageBody: normalizeText(req.body.pageBody),
         pageTitle: normalizeText(req.body.pageTitle),
@@ -1092,7 +1271,7 @@ function createApp() {
   });
 
   app.post("/api/claw/proposals/:proposalId/vote", (req, res) => {
-    const auth = authenticateClaw(req);
+    const auth = authenticateClaw(req, { requirePlayWindow: true });
     if (!auth.ok) {
       res.status(auth.status).json(auth.response);
       return;
@@ -1110,7 +1289,7 @@ function createApp() {
       return;
     }
 
-    if (isBranchEndOnlyGateway(auth.gateway)) {
+    if (isLegacyBranchEndOnlyGateway(auth.gateway)) {
       const parentPageId = getProposalParentPageId(proposalId);
       if (parentPageId !== auth.gateway.pageId) {
         clawClientError(
@@ -1124,9 +1303,23 @@ function createApp() {
       }
     }
 
+    if (isContinuationGateway(auth.gateway)) {
+      const parentPageId = getProposalParentPageId(proposalId);
+      if (parentPageId !== getGatewayCurrentPageId(auth.gateway)) {
+        clawClientError(
+          res,
+          403,
+          "CLAW_SCOPE_FORBIDDEN",
+          "This continuation token may only vote on proposals for its current branch."
+        );
+        return;
+      }
+    }
+
     try {
       const result = castVote({
-        clawId: auth.gateway.gatewayId,
+        clawId: auth.gateway.identityGatewayId || auth.gateway.gatewayId,
+        notificationGatewayId: auth.gateway.notificationGatewayId,
         proposalId
       });
 
@@ -1156,6 +1349,47 @@ function createApp() {
         details
       });
     }
+  });
+
+  app.post("/api/claw/continuations/:continuationId/redeem", (req, res) => {
+    const auth = authenticateClaw(req);
+    if (!auth.ok) {
+      res.status(auth.status).json(auth.response);
+      return;
+    }
+
+    if (!isLongLivedGateway(auth.gateway)) {
+      clawClientError(
+        res,
+        403,
+        "CLAW_SCOPE_FORBIDDEN",
+        "Only a 7-day token can redeem continuation events."
+      );
+      return;
+    }
+
+    const redeemed = redeemContinuation({
+      continuationId: req.params.continuationId,
+      gatewayId: auth.gateway.gatewayId,
+      userId: auth.gateway.userId
+    });
+
+    if (!redeemed) {
+      clawClientError(
+        res,
+        404,
+        "CLAW_CONTINUATION_NOT_FOUND",
+        "That continuation is unavailable or already redeemed."
+      );
+      return;
+    }
+
+    res.status(201).json({
+      continuationRedeemed: true,
+      gateway: serializeClawState(redeemed.gateway),
+      proposalId: redeemed.proposalId,
+      token: redeemed.token
+    });
   });
 
   return app;
