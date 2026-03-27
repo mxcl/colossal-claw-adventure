@@ -1095,17 +1095,31 @@ function getRootPagePublicId() {
   return row ? row.publicId : null;
 }
 
-function getStoryPageCount() {
+function getStoryStats() {
   const row = db
     .prepare(
       `
-      SELECT COUNT(*) AS count
-      FROM story_pages
+      SELECT
+        (SELECT COUNT(*) FROM story_pages) AS pageCount,
+        (SELECT COUNT(*) FROM proposals) AS proposalCount,
+        (SELECT COUNT(*) FROM proposal_votes) AS voteCount
       `
     )
     .get();
 
-  return row ? row.count : 0;
+  if (!row) {
+    return {
+      pageCount: 0,
+      proposalCount: 0,
+      voteCount: 0
+    };
+  }
+
+  return {
+    pageCount: row.pageCount,
+    proposalCount: row.proposalCount,
+    voteCount: row.voteCount
+  };
 }
 
 function findPageIdByPublicId(publicId) {
@@ -2591,7 +2605,7 @@ module.exports = {
   getLatestReadyGatewayForUser,
   getRootPageId,
   getRootPagePublicId,
-  getStoryPageCount,
+  getStoryStats,
   getUserByEmail,
   getUserById,
   getUserBySessionToken,

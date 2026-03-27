@@ -27,7 +27,7 @@ const {
   getPageState,
   getProposalParentPageId,
   getRootPagePublicId,
-  getStoryPageCount,
+  getStoryStats,
   getUserByEmail,
   getUserBySessionToken,
   issueClawGateway,
@@ -562,7 +562,7 @@ function createApp() {
     const rootPath = formatPath(getRootPagePublicId());
     res.send(
       renderLandingPage({
-        pageCount: getStoryPageCount(),
+        storyStats: getStoryStats(),
         readyGateway: req.viewer ? getLatestReadyGatewayForUser(req.viewer.id) : null,
         rootPath,
         viewer: req.viewer

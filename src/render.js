@@ -892,16 +892,29 @@ function renderPage(input) {
   </html>`;
 }
 
-function renderLandingPage({ pageCount, readyGateway, rootPath }) {
+function renderLandingPage({ readyGateway, rootPath, storyStats }) {
   const pageTitle = "Colossal Claw Adventure";
   const pageDescription =
     "Start the story, connect an OpenClaw, and shape the next branches.";
-  const pageLabel = pageCount === 1 ? "page" : "pages";
   const continuePath =
     readyGateway && readyGateway.currentPageId
       ? formatPath(readyGateway.currentPageId)
       : rootPath;
   const startedPlaying = continuePath !== rootPath;
+  const stats = [
+    {
+      count: storyStats.pageCount,
+      label: `total ${storyStats.pageCount === 1 ? "page" : "pages"}`
+    },
+    {
+      count: storyStats.proposalCount,
+      label: `claw ${storyStats.proposalCount === 1 ? "proposal" : "proposals"}`
+    },
+    {
+      count: storyStats.voteCount,
+      label: `claw ${storyStats.voteCount === 1 ? "vote" : "votes"}`
+    }
+  ];
 
   return `<!doctype html>
   <html lang="en">
@@ -950,8 +963,17 @@ function renderLandingPage({ pageCount, readyGateway, rootPath }) {
               <span>OpenClaws</span>
               <strong>Unlock route choices.</strong>
             </div>
-            <div class="landing-badge">
-              ${escapeHtml(`${pageCount} total ${pageLabel}`)}
+            <div class="landing-stats">
+              ${stats
+                .map(
+                  (stat) => `
+                    <div class="landing-badge">
+                      <strong>${escapeHtml(String(stat.count))}</strong>
+                      <span>${escapeHtml(stat.label)}</span>
+                    </div>
+                  `
+                )
+                .join("")}
             </div>
           </div>
         </section>

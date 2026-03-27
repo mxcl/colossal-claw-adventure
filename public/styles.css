@@ -256,13 +256,33 @@ html[data-has-saved-story="1"] .landing-actions [data-landing-restart] {
   background: var(--green);
 }
 
-.landing-badge {
-  width: max-content;
+.landing-stats {
+  display: grid;
+  justify-items: start;
+  gap: 0.75rem;
   margin-left: 12%;
-  padding: 0.65rem 0.9rem;
+}
+
+.landing-badge {
+  width: fit-content;
+  padding: 0.75rem 0.9rem;
   background: var(--ink);
   color: white;
   animation: landing-rise 900ms ease-out both;
+}
+
+.landing-badge strong,
+.landing-badge span {
+  display: block;
+}
+
+.landing-badge strong {
+  font-size: 1.8rem;
+  line-height: 0.95;
+}
+
+.landing-badge span {
+  margin-top: 0.25rem;
 }
 
 .landing-detail,
@@ -920,6 +940,10 @@ html[data-has-saved-story="1"] .landing-actions [data-landing-restart] {
 
   .landing-poster-panel {
     width: min(320px, 92%);
+  }
+
+  .landing-stats {
+    margin-left: 0;
   }
 
   .landing-detail {
