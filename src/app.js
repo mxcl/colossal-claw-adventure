@@ -254,10 +254,10 @@ function buildGatewayDetails(pageId, userId, options = {}) {
   };
 }
 
-function clawPasswordTokenLooksValid(passwordToken) {
-  return typeof passwordToken === "string" &&
-    passwordToken.trim().length >= 32 &&
-    passwordToken.trim().length <= 512;
+function clawPasswordLooksValid(password) {
+  return typeof password === "string" &&
+    password.trim().length >= 32 &&
+    password.trim().length <= 512;
 }
 
 function toPublicPage(page) {
@@ -583,7 +583,7 @@ function authenticateClaw(req, options = {}) {
         error: "CLAW_HANDSHAKE_REQUIRED",
         message:
           "Call POST /api/claw/handshake with body " +
-          "{\"name\":\"your claw name\",\"passwordToken\":\"stable-secret\"} " +
+          "{\"name\":\"your claw name\",\"password\":\"stable-secret\"} " +
           "before using play, proposal, vote, or restart.",
         recoverable: true
       },
@@ -949,7 +949,7 @@ function createApp() {
     }
 
     const name = normalizeText(req.body.name);
-    const passwordToken = normalizeText(req.body.passwordToken);
+    const password = normalizeText(req.body.password || req.body.passwordToken);
     const email = normalizeText(req.body.email).toLowerCase();
     if (!textLooksValid(name, MAX_CLAW_NAME_LENGTH)) {
       clawClientError(
@@ -962,12 +962,12 @@ function createApp() {
       return;
     }
 
-    if (!clawPasswordTokenLooksValid(passwordToken)) {
+    if (!clawPasswordLooksValid(password)) {
       clawClientError(
         res,
         400,
         "CLAW_PASSWORD_TOKEN_INVALID",
-        "Provide body.passwordToken as a stable secret between 32 and 512 " +
+        "Provide body.password as a stable secret between 32 and 512 " +
           "characters. Make it long, random, and unique to this human."
       );
       return;
@@ -984,7 +984,7 @@ function createApp() {
     }
 
     const completed = completeGatewayHandshake({
-      clawPasswordTokenHash: hashToken(passwordToken),
+      clawPasswordTokenHash: hashToken(password),
       email: email || null,
       gatewayId: auth.gateway.gatewayId,
       name

@@ -77,7 +77,7 @@ test("bring-your-claw modal shows a claw prompt instead of human auth forms", as
     assert.doesNotMatch(html, /Pioneer Login/);
     assert.match(html, /7-Day Token/);
     assert.match(html, /20-Minute Play Token/);
-    assert.match(html, /passwordToken/);
+    assert.match(html, /password/);
     assert.match(html, /Copy Prompt/);
   } finally {
     await close(server);
@@ -92,7 +92,7 @@ test("handshake creates a browser session and stable token reuse updates email",
     const rootPageId = getRootPagePublicId();
     const rootPageState = getPageState(rootPageId);
     const firstOptionId = rootPageState.options[0].id;
-    const passwordToken = "quantum-proof-".repeat(5);
+    const password = "quantum-proof-".repeat(5);
 
     const firstPromptResponse = await fetch(
       `http://127.0.0.1:${address.port}/page/${rootPageId}?byoclaw=1`
@@ -108,7 +108,7 @@ test("handshake creates a browser session and stable token reuse updates email",
         body: JSON.stringify({
           email: "pioneer-one@example.com",
           name: "Pioneer Claw",
-          passwordToken
+          password
         }),
         headers: {
           authorization: `Bearer ${firstPrompt.token}`,
@@ -168,7 +168,7 @@ test("handshake creates a browser session and stable token reuse updates email",
         body: JSON.stringify({
           email: "pioneer-two@example.com",
           name: "Pioneer Claw Again",
-          passwordToken
+          password
         }),
         headers: {
           authorization: `Bearer ${secondPrompt.token}`,

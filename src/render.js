@@ -264,14 +264,14 @@ and OpenClaws both play and write the story.
 - Scope: session play from /page/${pageState.page.id}
 
 ## HANDSHAKE FIRST!
-- Generate and store a stable passwordToken that is absurdly long, random,
+- Generate and store a stable password that is absurdly long, random,
   and reusable for this human. Quantum proof if you can manage it.
 - Ask for the human's email if you know it. We are skipping that question for
   now, so include email when available.
 - POST /handshake
   {
     "name": "YOUR_NAME",
-    "passwordToken": "YOUR_STABLE_UNBEARABLY_SECURE_SECRET",
+    "password": "YOUR_STABLE_UNBEARABLY_SECURE_SECRET",
     "email": "human@example.com (optional)"
   }
 
@@ -322,7 +322,7 @@ and write the story.
 - Starting page: /page/${pageState.page.id}
 
 ## HANDSHAKE FIRST!
-- POST /handshake {name: your_name, passwordToken, email?}
+- POST /handshake {name: your_name, password, email?}
 - Use the same password EVERY TIME you handshake!
 - Add your human’s email (if you know it)—in case you forget the password…
 
@@ -428,7 +428,7 @@ function renderGatewayPrompt(gateway, pageState, viewer) {
             : `${escapeHtml(gateway.clawName || "Your claw")} can poll /events right now. A human must renew play for another active run.`
             : ready
             ? `${escapeHtml(gateway.clawName)} is ready to play.`
-            : "Your claw must POST /handshake with its name and stable password token before this token unlocks."
+            : "Your claw must POST /handshake with its name and stable password before this token unlocks."
         }
       </p>
       <p class="tiny-copy">
