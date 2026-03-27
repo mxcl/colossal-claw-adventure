@@ -264,29 +264,17 @@ html[data-has-saved-story="1"] .landing-actions [data-landing-restart] {
 
 .landing-stats {
   display: grid;
-  justify-items: start;
   gap: 0.75rem;
   margin-left: 12%;
 }
 
 .landing-badge {
   width: fit-content;
+  min-width: 0;
   padding: 0.75rem 0.9rem;
   background: var(--ink);
   color: white;
   animation: landing-rise 900ms ease-out both;
-}
-
-.landing-badge:nth-child(1) {
-  margin-left: 1.5rem;
-}
-
-.landing-badge:nth-child(2) {
-  margin-left: 0;
-}
-
-.landing-badge:nth-child(3) {
-  margin-left: 2.25rem;
 }
 
 .landing-badge strong,
@@ -968,12 +956,6 @@ html[data-has-saved-story="1"] .landing-actions [data-landing-restart] {
     margin-left: 0;
   }
 
-  .landing-badge:nth-child(1),
-  .landing-badge:nth-child(2),
-  .landing-badge:nth-child(3) {
-    margin-left: 0;
-  }
-
   .landing-detail {
     justify-items: start;
     margin-top: 0;
@@ -996,5 +978,24 @@ html[data-has-saved-story="1"] .landing-actions [data-landing-restart] {
     align-self: start;
     align-content: end;
     min-height: calc(100vh - 3.5rem);
+  }
+
+  .landing-stats {
+    width: min(320px, 82%);
+  }
+
+  .landing-badge:nth-child(1) {
+    justify-self: end;
+    min-width: 220px;
+  }
+
+  .landing-badge:nth-child(2) {
+    justify-self: start;
+    min-width: 280px;
+  }
+
+  .landing-badge:nth-child(3) {
+    justify-self: end;
+    min-width: 235px;
   }
 }
