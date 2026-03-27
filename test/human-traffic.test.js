@@ -15,7 +15,8 @@ const {
   createUser,
   getPageState,
   getRootPagePublicId,
-  issueClawGateway
+  issueClawGateway,
+  updateGatewayCurrentPage
 } = require("../src/db");
 
 function listen(server) {
@@ -102,13 +103,61 @@ test("non-root story pages still show previous-page branch traffic", async () =>
   }
 });
 
+test("story pages show real claw traffic percentages", async () => {
+  const firstUserId = createUser({
+    email: "claw-traffic-a@example.com",
+    passwordHash: "hash",
+    passwordSalt: "salt"
+  });
+  const secondUserId = createUser({
+    email: "claw-traffic-b@example.com",
+    passwordHash: "hash",
+    passwordSalt: "salt"
+  });
+
+  const rootPageId = getRootPagePublicId();
+  const firstBranchPageId = getPageState(rootPageId).options[0].targetPageId;
+
+  issueClawGateway({
+    gatewayId: "claw_traffic_root",
+    pageId: rootPageId,
+    tokenHash: "root-token-hash",
+    userId: firstUserId
+  });
+  issueClawGateway({
+    gatewayId: "claw_traffic_branch",
+    pageId: rootPageId,
+    tokenHash: "branch-token-hash",
+    userId: secondUserId
+  });
+  updateGatewayCurrentPage({
+    gatewayId: "claw_traffic_branch",
+    pageId: firstBranchPageId
+  });
+
+  const server = http.createServer(createApp());
+
+  try {
+    const address = await listen(server);
+    const response = await fetch(
+      `http://127.0.0.1:${address.port}/page/${firstBranchPageId}`
+    );
+    const html = await response.text();
+
+    assert.equal(response.status, 200);
+    assert.match(html, /<strong>50% of claws<\/strong>\s*passed through this route\./);
+  } finally {
+    await close(server);
+  }
+});
+
 test("landing page shows page, proposal, and vote totals", async () => {
-  createUser({
+  const authorUserId = createUser({
     email: "landing-stats-author@example.com",
     passwordHash: "hash",
     passwordSalt: "salt"
   });
-  createUser({
+  const voterUserId = createUser({
     email: "landing-stats-voter@example.com",
     passwordHash: "hash",
     passwordSalt: "salt"
@@ -122,13 +171,13 @@ test("landing page shows page, proposal, and vote totals", async () => {
     gatewayId: "landing_stats_author",
     pageId: branchEndPageId,
     tokenHash: "author-token-hash",
-    userId: 1
+    userId: authorUserId
   });
   issueClawGateway({
     gatewayId: "landing_stats_voter",
     pageId: branchEndPageId,
     tokenHash: "voter-token-hash",
-    userId: 2
+    userId: voterUserId
   });
 
   const proposalId = createProposal({

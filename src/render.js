@@ -100,20 +100,6 @@ function renderSiteFooter(footerClass = "site-footer", extraLinks = "") {
   `;
 }
 
-function fakeClawVisitPercent(pageId, humanVisitPercent) {
-  const basis = String(pageId || "");
-  let hash = 0;
-
-  for (const char of basis) {
-    hash = (hash * 31 + char.charCodeAt(0)) % 997;
-  }
-
-  const floor = Math.max(7, Math.min(humanVisitPercent || 0, 92) - 28);
-  const ceiling = Math.max(floor, Math.min(96, (humanVisitPercent || 0) + 12));
-
-  return floor + (hash % (ceiling - floor + 1));
-}
-
 function renderStoryOptions(pageState, viewer, readyGateway, byoclawHref) {
   if (!pageState.options.length) {
     return "";
@@ -748,10 +734,6 @@ function renderPage(input) {
   const currentPath = formatPath(pageState.page.id);
   const isBranchEnd = pageState.options.length === 0;
   const byoclawHref = viewer ? `${currentPath}?byoclaw=1` : `${currentPath}?byoclaw=1`;
-  const fakeClawPercent = fakeClawVisitPercent(
-    pageState.page.id,
-    pageState.page.humanVisitPercent
-  );
   const showBranchTrafficPercent =
     Boolean(pageState.page.parentPageId) &&
     pageState.page.id !== pageState.rootPageId;
@@ -855,8 +837,8 @@ function renderPage(input) {
                 : ""
             }
             <p>
-              <strong>${fakeClawPercent}% of claws</strong> passed through this
-              route.
+              <strong>${pageState.page.globalClawVisitPercent}% of claws</strong>
+              passed through this route.
             </p>
           </aside>
         </section>

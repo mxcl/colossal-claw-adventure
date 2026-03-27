@@ -1414,6 +1414,30 @@ function getHumanVisitCounts(pageIds) {
   return new Map(rows.map((row) => [row.pageId, row.visitorCount]));
 }
 
+function getClawVisitCounts(pageIds) {
+  const uniquePageIds = [...new Set(pageIds.filter((pageId) => Number.isInteger(pageId) && pageId > 0))];
+
+  if (!uniquePageIds.length) {
+    return new Map();
+  }
+
+  const placeholders = uniquePageIds.map(() => "?").join(", ");
+  const rows = db
+    .prepare(
+      `
+      SELECT
+        page_id AS pageId,
+        COUNT(DISTINCT gateway_id) AS visitorCount
+      FROM claw_page_visits
+      WHERE page_id IN (${placeholders})
+      GROUP BY page_id
+      `
+    )
+    .all(...uniquePageIds);
+
+  return new Map(rows.map((row) => [row.pageId, row.visitorCount]));
+}
+
 function getTotalHumanPlayerCount() {
   const row = db
     .prepare(
@@ -1425,6 +1449,19 @@ function getTotalHumanPlayerCount() {
     .get();
 
   return row?.totalHumanPlayerCount || 0;
+}
+
+function getTotalClawPlayerCount() {
+  const row = db
+    .prepare(
+      `
+      SELECT COUNT(DISTINCT gateway_id) AS totalClawPlayerCount
+      FROM claw_page_visits
+      `
+    )
+    .get();
+
+  return row?.totalClawPlayerCount || 0;
 }
 
 function getPageState(pageId, voterClawId = null, includeProposalDetails = false) {
@@ -1442,11 +1479,18 @@ function getPageState(pageId, voterClawId = null, includeProposalDetails = false
     loaded.page.parentPageDbId,
     ...loaded.options.map((option) => option.targetPageDbId)
   ]);
+  const clawVisitCounts = getClawVisitCounts([
+    loaded.page.dbId,
+    loaded.page.parentPageDbId,
+    ...loaded.options.map((option) => option.targetPageDbId)
+  ]);
   const currentPageHumanVisitorCount = humanVisitCounts.get(loaded.page.dbId) || 0;
+  const currentPageClawVisitorCount = clawVisitCounts.get(loaded.page.dbId) || 0;
   const parentPageHumanVisitorCount = loaded.page.parentPageDbId
     ? humanVisitCounts.get(loaded.page.parentPageDbId) || 0
     : 0;
   const totalHumanPlayerCount = getTotalHumanPlayerCount();
+  const totalClawPlayerCount = getTotalClawPlayerCount();
   const currentPageHumanVisitPercent = loaded.page.parentPageDbId
     ? (
         parentPageHumanVisitorCount > 0
@@ -1485,7 +1529,14 @@ function getPageState(pageId, voterClawId = null, includeProposalDetails = false
     })),
     page: {
       body: loaded.page.body,
+      clawVisitorCount: currentPageClawVisitorCount,
       dbId: loaded.page.dbId,
+      globalClawVisitPercent:
+        totalClawPlayerCount > 0
+          ? Math.round(
+              (currentPageClawVisitorCount / totalClawPlayerCount) * 100
+            )
+          : 0,
       globalHumanVisitPercent:
         totalHumanPlayerCount > 0
           ? Math.round(
@@ -1499,6 +1550,7 @@ function getPageState(pageId, voterClawId = null, includeProposalDetails = false
       parentHumanVisitorCount: parentPageHumanVisitorCount,
       parentPageDbId: loaded.page.parentPageDbId,
       parentPageId: loaded.page.parentPagePublicId,
+      totalClawPlayerCount,
       totalHumanPlayerCount,
       title: loaded.page.title
     },
