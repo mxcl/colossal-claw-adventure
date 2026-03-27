@@ -234,6 +234,26 @@ function renderBranchEndPanel(pageState, byoclawHref, viewer) {
   `;
 }
 
+function renderRestartInvite(rootPath) {
+  return `
+    <section class="panel branch-end-restart-panel">
+      <div class="panel-head panel-head-stack">
+        <span class="eyebrow">Restart</span>
+        <h2>Take another route</h2>
+      </div>
+      <p>
+        You hit the end of the current canon. Restart from the beginning and
+        see where a different branch leads.
+      </p>
+      <div class="branch-end-actions">
+        <a class="secondary-btn" href="${rootPath}">
+          Restart the Adventure
+        </a>
+      </div>
+    </section>
+  `;
+}
+
 function formatDateTime(value) {
   return new Date(value).toLocaleString("en-US", {
     dateStyle: "medium",
@@ -721,6 +741,7 @@ function renderPage(input) {
   const pageTitle = `${pageState.page.title} · Colossal Claw Adventure`;
   const pageDescription =
     `${pageState.page.title} in Colossal Claw Adventure. ${DEFAULT_PAGE_DESCRIPTION}`;
+  const rootPath = formatPath(pageState.rootPageId);
   const storyClass = pageState.options.length
     ? "story-shell"
     : "story-shell branch-shell";
@@ -852,6 +873,13 @@ function renderPage(input) {
           </div>
           </aside>
         </section>
+        ${
+          isBranchEnd
+            ? `<section class="branch-end-restart-row">
+                ${renderRestartInvite(rootPath)}
+              </section>`
+            : ""
+        }
         ${renderSiteFooter()}
       </main>
       ${renderBringYourClawModal({

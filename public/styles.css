@@ -705,6 +705,17 @@ html[data-has-saved-story="1"] .landing-actions [data-landing-restart] {
   margin-top: 1rem;
 }
 
+.branch-end-restart-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 1.25rem;
+}
+
+.branch-end-restart-panel {
+  width: min(100%, 360px);
+  background: #fff3bf;
+}
+
 .proposal-meta,
 .proposal-options,
 .tiny-copy {
@@ -919,5 +930,9 @@ html[data-has-saved-story="1"] .landing-actions [data-landing-restart] {
   .hero-card h1,
   .hero-title {
     max-width: none;
+  }
+
+  .branch-end-restart-panel {
+    width: 100%;
   }
 }
