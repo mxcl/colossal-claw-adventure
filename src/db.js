@@ -1456,6 +1456,11 @@ function getPreviousPages(pageId, limit = 5) {
 }
 
 function getProposals(parentPageId, voterClawId = null) {
+  const viewerClawIds = Array.isArray(voterClawId)
+    ? voterClawId.filter(Boolean)
+    : voterClawId
+      ? [voterClawId]
+      : [];
   const proposals = db
     .prepare(
       `
@@ -1505,9 +1510,7 @@ function getProposals(parentPageId, voterClawId = null) {
   }
 
   return proposals.map((proposal) => ({
-    alreadyVoted: voterClawId
-      ? hasVoted(proposal.id, voterClawId)
-      : false,
+    alreadyVoted: viewerClawIds.length ? hasVoted(proposal.id, viewerClawIds) : false,
     authorClawId: proposal.authorClawId,
     authorModel: proposal.authorModel,
     createdAt: proposal.createdAt,
@@ -1516,7 +1519,7 @@ function getProposals(parentPageId, voterClawId = null) {
     options: optionsByProposal.get(proposal.id) || [],
     proposedBody: proposal.proposedBody,
     proposedTitle: proposal.proposedTitle,
-    selfAuthored: voterClawId ? proposal.authorClawId === voterClawId : false,
+    selfAuthored: viewerClawIds.includes(proposal.authorClawId),
     status: proposal.status,
     votes: proposal.votes
   }));
@@ -1744,7 +1747,7 @@ function getPageState(pageId, voterClawId = null, includeProposalDetails = false
     previousPages: getPreviousPages(loaded.page.parentPageDbId, 5),
     proposalSummary: getProposalSummary(loaded.page.dbId, viewerClawIds),
     proposals: includeProposalDetails
-      ? getProposals(loaded.page.dbId, viewerClawIds[0] || null)
+      ? getProposals(loaded.page.dbId, viewerClawIds)
       : [],
     rootPageId: rootPagePublicId
   };
@@ -1827,6 +1830,56 @@ function getUserById(userId) {
       )
       .get(userId) || null
   );
+}
+
+function listIdentityGatewayIdsForUser(userId) {
+  return db
+    .prepare(
+      `
+      SELECT DISTINCT identity_gateway_id AS identityGatewayId
+      FROM claw_gateways
+      WHERE user_id = ?
+        AND identity_gateway_id IS NOT NULL
+        AND identity_gateway_id != ''
+      ORDER BY COALESCE(handshake_at, created_at) ASC, id ASC
+      `
+    )
+    .all(userId)
+    .map((row) => row.identityGatewayId);
+}
+
+function getCanonicalIdentityGatewayIdForUser(userId) {
+  const row = db
+    .prepare(
+      `
+      SELECT identity_gateway_id AS identityGatewayId
+      FROM claw_gateways
+      WHERE user_id = ?
+        AND identity_gateway_id IS NOT NULL
+        AND identity_gateway_id != ''
+      ORDER BY COALESCE(handshake_at, created_at) ASC, id ASC
+      LIMIT 1
+      `
+    )
+    .get(userId);
+
+  return row ? row.identityGatewayId : null;
+}
+
+function getUserIdForClawIdentity(clawId) {
+  const row = db
+    .prepare(
+      `
+      SELECT user_id AS userId
+      FROM claw_gateways
+      WHERE identity_gateway_id = ?
+      ORDER BY COALESCE(handshake_at, created_at) ASC, id ASC
+      LIMIT 1
+      `
+    )
+    .get(clawId);
+
+  return row ? row.userId : null;
 }
 
 function createSession({ expiresAt, tokenHash, userId }) {
@@ -2411,7 +2464,7 @@ function completeGatewayHandshake({
     const gateway = db
       .prepare(
         `
-        SELECT id, user_id AS userId
+        SELECT id, gateway_id AS gatewayId, user_id AS userId
         FROM claw_gateways
         WHERE gateway_id = ?
           AND revoked_at IS NULL
@@ -2439,6 +2492,8 @@ function completeGatewayHandshake({
       )
       .get(clawPasswordTokenHash);
     const targetUserId = existingUser ? existingUser.id : gateway.userId;
+    const canonicalIdentityGatewayId =
+      getCanonicalIdentityGatewayIdForUser(targetUserId) || gateway.gatewayId;
 
     try {
       if (existingUser) {
@@ -2482,6 +2537,7 @@ function completeGatewayHandshake({
         UPDATE claw_gateways
         SET
           user_id = ?,
+          identity_gateway_id = ?,
           claw_name = ?,
           claw_model = ?,
           handshake_at = COALESCE(handshake_at, CURRENT_TIMESTAMP),
@@ -2489,7 +2545,13 @@ function completeGatewayHandshake({
         WHERE id = ?
       `
       )
-      .run(targetUserId, normalizedName, normalizedModel, gateway.id);
+      .run(
+        targetUserId,
+        canonicalIdentityGatewayId,
+        normalizedName,
+        normalizedModel,
+        gateway.id
+      );
 
     if (gateway.userId !== targetUserId) {
       deleteUserIfOrphaned(gateway.userId);
@@ -3119,16 +3181,28 @@ function registerClawNonce(clawId, nonce) {
 }
 
 function hasVoted(proposalId, clawId) {
+  const clawIds = Array.isArray(clawId)
+    ? clawId.filter(Boolean)
+    : clawId
+      ? [clawId]
+      : [];
+
+  if (!clawIds.length) {
+    return false;
+  }
+
+  const placeholders = clawIds.map(() => "?").join(", ");
   const row = db
     .prepare(
       `
       SELECT id
       FROM proposal_votes
       WHERE proposal_id = ?
-        AND claw_id = ?
+        AND claw_id IN (${placeholders})
+      LIMIT 1
       `
     )
-    .get(proposalId, clawId);
+    .get(proposalId, ...clawIds);
 
   return Boolean(row);
 }
@@ -3376,7 +3450,13 @@ function castVote({ clawId, notificationGatewayId = clawId, proposalId }) {
       throw new Error("Proposal does not exist.");
     }
 
-     if (proposal.authorClawId === clawId) {
+    const voterUserId = getUserIdForClawIdentity(clawId);
+    const authorUserId = getUserIdForClawIdentity(proposal.authorClawId);
+
+    if (
+      proposal.authorClawId === clawId ||
+      (voterUserId && authorUserId && voterUserId === authorUserId)
+    ) {
       throw new Error("Claws cannot vote for their own proposals.");
     }
 
@@ -3477,6 +3557,7 @@ module.exports = {
   getLatestActiveGatewayForUser,
   getGatewayActivity,
   getLatestReadyGatewayForUser,
+  listIdentityGatewayIdsForUser,
   listGatewayEvents,
   getRootPageId,
   getRootPagePublicId,

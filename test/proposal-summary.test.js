@@ -50,3 +50,50 @@ test("signed-in viewers still see proposal counts for their current page", () =>
   assert.equal(summary.viewerActed, true);
   assert.equal(summary.viewerProposalCount, 1);
 });
+
+test("proposal details treat multiple viewer claw ids as one logical claw", () => {
+  const userId = createUser({
+    email: "proposal-summary-second@example.com"
+  });
+
+  const rootPageId = getRootPagePublicId();
+  const calibrationPageId = getPageState(rootPageId).options[0].targetPageId;
+  const branchEndPageId = getPageState(calibrationPageId).options[0].targetPageId;
+
+  issueClawGateway({
+    gatewayId: "cca_gateway_summary_first_identity",
+    pageId: branchEndPageId,
+    tokenHash: "token-hash-1",
+    userId
+  });
+  issueClawGateway({
+    gatewayId: "cca_gateway_summary_second_identity",
+    pageId: branchEndPageId,
+    tokenHash: "token-hash-2",
+    userId
+  });
+
+  createProposal({
+    authorClawId: "cca_gateway_summary_first_identity",
+    authorModel: "test-model",
+    options: ["Inspect the relay cabinet", "Follow the service tunnel"],
+    proposedBody: "A claw leaves a continuation behind.",
+    proposedTitle: "Relay Room Again",
+    parentPageId: branchEndPageId
+  });
+
+  const proposals = getPageState(
+    branchEndPageId,
+    [
+      "cca_gateway_summary_second_identity",
+      "cca_gateway_summary_first_identity"
+    ],
+    true
+  ).proposals;
+  const proposal = proposals.find(
+    (entry) => entry.proposedTitle === "Relay Room Again"
+  );
+
+  assert.ok(proposal);
+  assert.equal(proposal.selfAuthored, true);
+});

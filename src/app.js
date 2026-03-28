@@ -27,6 +27,7 @@ const {
   getGatewayActivity,
   getLatestReadyGatewayForUser,
   listGatewayEvents,
+  listIdentityGatewayIdsForUser,
   getPageState,
   hasGatewayBranchInterest,
   getProposalParentPageId,
@@ -324,7 +325,10 @@ function getGatewayIssuingUserId(req) {
 
 function serializeClawState(gateway) {
   const currentPageId = getGatewayCurrentPageId(gateway);
-  const pageState = getPageState(currentPageId, gateway.gatewayId, false);
+  const viewerClawIds = gateway.userId
+    ? listIdentityGatewayIdsForUser(gateway.userId)
+    : [gateway.identityGatewayId || gateway.gatewayId];
+  const pageState = getPageState(currentPageId, viewerClawIds, false);
 
   return {
     branchEnd: pageState.options.length === 0,
@@ -358,19 +362,9 @@ function renderStoryResponse(req, res, pageId, input = {}) {
   const gateways = viewer ? listActiveGatewaysForUser(viewer.id) : [];
   let readyGateway = viewer ? getLatestReadyGatewayForUser(viewer.id) : null;
   const latestFullGateway = getLatestFullGateway(gateways);
-  const viewerGatewayIdsForPage = [
-    ...new Set(
-      [
-        ...gateways
-          .filter(
-            (gateway) =>
-              isLegacyBranchEndOnlyGateway(gateway) && gateway.pageId === pageId
-          )
-          .map((gateway) => gateway.gatewayId),
-        readyGateway ? readyGateway.gatewayId : null
-      ].filter(Boolean)
-    )
-  ];
+  const viewerGatewayIdsForPage = viewer
+    ? listIdentityGatewayIdsForUser(viewer.id)
+    : [];
   const pageState = getPageState(
     pageId,
     viewerGatewayIdsForPage,
@@ -1175,7 +1169,8 @@ function createApp() {
       return;
     }
 
-    const pageState = getPageState(pageId, auth.gateway.gatewayId, true);
+    const viewerClawIds = listIdentityGatewayIdsForUser(auth.gateway.userId);
+    const pageState = getPageState(pageId, viewerClawIds, true);
 
     res.json({
       actions: {

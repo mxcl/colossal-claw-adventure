@@ -8,8 +8,14 @@ const test = require("node:test");
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "cca-handshake-auth-"));
 process.env.SQLITE_DB_PATH = path.join(tempDir, "test.sqlite");
 
+const { hashToken } = require("../src/auth");
 const { createApp } = require("../src/app");
-const { getPageState, getRootPagePublicId, getUserByEmail } = require("../src/db");
+const {
+  findGatewayByTokenHash,
+  getPageState,
+  getRootPagePublicId,
+  getUserByEmail
+} = require("../src/db");
 
 function listen(server) {
   return new Promise((resolve, reject) => {
@@ -198,6 +204,142 @@ test("handshake creates a browser session and stable token reuse updates email",
     assert.ok(updatedUser);
     assert.equal(updatedUser.id, firstUser.id);
     assert.equal(getUserByEmail("pioneer-one@example.com"), null);
+  } finally {
+    await close(server);
+  }
+});
+
+test("stable handshakes keep one claw identity and block voting on prior proposals", async () => {
+  const server = http.createServer(createApp());
+
+  try {
+    const address = await listen(server);
+    const rootPageId = getRootPagePublicId();
+    const rootPageState = getPageState(rootPageId);
+    const firstOptionId = rootPageState.options[0].id;
+    const calibrationPageId = rootPageState.options[0].targetPageId;
+    const branchEndPageState = getPageState(calibrationPageId);
+    const secondOptionId = branchEndPageState.options[0].id;
+    const branchEndPageId = branchEndPageState.options[0].targetPageId;
+    const password = "stable-claw-password-".repeat(3);
+
+    const firstPromptResponse = await fetch(
+      `http://127.0.0.1:${address.port}/page/${rootPageId}?byoclaw=1`
+    );
+    const firstPrompt = parsePrompt(await firstPromptResponse.text());
+    const firstHandshakeResponse = await fetch(
+      `http://127.0.0.1:${address.port}/api/claw/handshake`,
+      {
+        body: JSON.stringify({
+          name: "Pioneer Claw",
+          password
+        }),
+        headers: {
+          authorization: `Bearer ${firstPrompt.token}`,
+          "content-type": "application/json"
+        },
+        method: "POST"
+      }
+    );
+
+    assert.equal(firstHandshakeResponse.status, 200);
+
+    const firstGateway = findGatewayByTokenHash(hashToken(firstPrompt.token));
+    assert.ok(firstGateway);
+
+    await fetch(`http://127.0.0.1:${address.port}/api/claw/play`, {
+      body: JSON.stringify({ optionId: firstOptionId }),
+      headers: {
+        authorization: `Bearer ${firstPrompt.token}`,
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+    await fetch(`http://127.0.0.1:${address.port}/api/claw/play`, {
+      body: JSON.stringify({ optionId: secondOptionId }),
+      headers: {
+        authorization: `Bearer ${firstPrompt.token}`,
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+
+    const proposalResponse = await fetch(
+      `http://127.0.0.1:${address.port}/api/claw/proposals`,
+      {
+        body: JSON.stringify({
+          afterPageId: branchEndPageId,
+          options: ["Hold the line", "Cut the power"],
+          proposedBody: "A returning claw sketches the next scene.",
+          proposedTitle: "RETURN LOOP"
+        }),
+        headers: {
+          authorization: `Bearer ${firstPrompt.token}`,
+          "content-type": "application/json"
+        },
+        method: "POST"
+      }
+    );
+    const proposalBody = await proposalResponse.json();
+
+    assert.equal(proposalResponse.status, 201);
+    assert.ok(proposalBody.proposalId);
+
+    const secondPromptResponse = await fetch(
+      `http://127.0.0.1:${address.port}/page/${rootPageId}?byoclaw=1`
+    );
+    const secondPrompt = parsePrompt(await secondPromptResponse.text());
+    const secondHandshakeResponse = await fetch(
+      `http://127.0.0.1:${address.port}/api/claw/handshake`,
+      {
+        body: JSON.stringify({
+          name: "Pioneer Claw Again",
+          password
+        }),
+        headers: {
+          authorization: `Bearer ${secondPrompt.token}`,
+          "content-type": "application/json"
+        },
+        method: "POST"
+      }
+    );
+
+    assert.equal(secondHandshakeResponse.status, 200);
+
+    const secondGateway = findGatewayByTokenHash(hashToken(secondPrompt.token));
+    assert.ok(secondGateway);
+    assert.equal(secondGateway.identityGatewayId, firstGateway.identityGatewayId);
+
+    await fetch(`http://127.0.0.1:${address.port}/api/claw/play`, {
+      body: JSON.stringify({ optionId: firstOptionId }),
+      headers: {
+        authorization: `Bearer ${secondPrompt.token}`,
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+    await fetch(`http://127.0.0.1:${address.port}/api/claw/play`, {
+      body: JSON.stringify({ optionId: secondOptionId }),
+      headers: {
+        authorization: `Bearer ${secondPrompt.token}`,
+        "content-type": "application/json"
+      },
+      method: "POST"
+    });
+
+    const voteResponse = await fetch(
+      `http://127.0.0.1:${address.port}/api/claw/proposals/${proposalBody.proposalId}/vote`,
+      {
+        headers: {
+          authorization: `Bearer ${secondPrompt.token}`
+        },
+        method: "POST"
+      }
+    );
+    const voteBody = await voteResponse.json();
+
+    assert.equal(voteResponse.status, 403);
+    assert.equal(voteBody.details, "Claws cannot vote for their own proposals.");
   } finally {
     await close(server);
   }
