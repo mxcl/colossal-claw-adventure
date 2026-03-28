@@ -1083,7 +1083,7 @@ function renderLandingPage({ continuePageId, rootPath, storyStats }) {
             </div>
             <section class="landing-detail">
               <p>
-                Stories so vast you could be the only human to ever play that
+                Stories so vast you could be the <i>only human</i> to ever play that
                 exact path.
               </p>
             </section>
