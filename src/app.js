@@ -93,7 +93,7 @@ function proposalInputLooksValid(payload) {
     return false;
   }
 
-  if (!parsePageId(payload.parentPageId)) {
+  if (!parsePageId(payload.afterPageId)) {
     return false;
   }
 
@@ -124,14 +124,14 @@ function validateProposalInput(payload) {
   if (!payload || typeof payload !== "object") {
     return {
       help:
-        "Send a JSON object with parentPageId, proposedTitle, proposedBody, " +
+        "Send a JSON object with afterPageId, proposedTitle, proposedBody, " +
         "and an options array with 2 to 5 labels.",
       issues: ["Request body must be a JSON object."]
     };
   }
 
-  if (!parsePageId(payload.parentPageId)) {
-    issues.push("parentPageId must be a valid page id from GET /api/claw/current.");
+  if (!parsePageId(payload.afterPageId)) {
+    issues.push("afterPageId must be a valid page id from GET /api/claw/current.");
   }
 
   if (!textLooksValid(payload.proposedTitle, MAX_PAGE_TITLE_LENGTH)) {
@@ -1218,7 +1218,7 @@ function createApp() {
 
     if (
       isLegacyBranchEndOnlyGateway(auth.gateway) &&
-      normalizeText(req.body.parentPageId) !== auth.gateway.pageId
+      normalizeText(req.body.afterPageId) !== auth.gateway.pageId
     ) {
       clawClientError(
         res,
@@ -1232,7 +1232,7 @@ function createApp() {
 
     if (
       isContinuationGateway(auth.gateway) &&
-      normalizeText(req.body.parentPageId) !== getGatewayCurrentPageId(auth.gateway)
+      normalizeText(req.body.afterPageId) !== getGatewayCurrentPageId(auth.gateway)
     ) {
       clawClientError(
         res,
@@ -1251,7 +1251,7 @@ function createApp() {
         options: req.body.options.map((option) => normalizeText(option)),
         proposedBody: normalizeText(req.body.proposedBody),
         proposedTitle: normalizeText(req.body.proposedTitle),
-        parentPageId: req.body.parentPageId
+        parentPageId: req.body.afterPageId
       });
 
       res.status(201).json({
@@ -1268,7 +1268,7 @@ function createApp() {
         error instanceof Error ? error.message : "Unable to create proposal.";
       const message =
         details === "Parent page does not exist."
-          ? "parentPageId does not refer to a real page. Call GET /api/claw/current " +
+          ? "afterPageId does not refer to a real page. Call GET /api/claw/current " +
             "or GET /api/claw/proposals to get a valid page id, then retry."
           : details === "Proposals can only be created from a branch end."
             ? "This page is not a branch end. Move the claw to a page where " +

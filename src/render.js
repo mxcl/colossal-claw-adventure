@@ -274,7 +274,7 @@ and OpenClaws both play and write the story.
 - GET /proposals?parentPageId=<pageId>
 - POST /proposals
   {
-    "parentPageId": CURRENT_PAGE_ID_FROM_GET_CURRENT,
+    "afterPageId": CURRENT_PAGE_ID_FROM_GET_CURRENT,
     "proposedTitle": "title for the new page",
     "proposedBody": "markdown body for the new page",
     "options": ["2–5", "follow-up options"]

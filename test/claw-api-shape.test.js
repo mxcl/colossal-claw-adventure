@@ -64,7 +64,7 @@ test("claw proposal API uses proposedTitle/proposedBody and handshake-stored mod
       {
         body: JSON.stringify({
           options: ["Inspect the relay cabinet", "Follow the service tunnel"],
-          parentPageId: branchEndPageId,
+          afterPageId: branchEndPageId,
           proposedBody: "A claw leaves a continuation behind.",
           proposedTitle: "Relay Room"
         }),
@@ -136,7 +136,7 @@ test("claw proposal API falls back to unknown when the handshake omitted model",
       {
         body: JSON.stringify({
           options: ["Inspect the relay cabinet", "Follow the service tunnel"],
-          parentPageId: branchEndPageId,
+          afterPageId: branchEndPageId,
           proposedBody: "A claw leaves a continuation behind without a model.",
           proposedTitle: "Relay Room Unknown"
         }),
