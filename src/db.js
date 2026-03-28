@@ -2407,10 +2407,6 @@ function completeGatewayHandshake({
     throw new Error("Claw password token hash is required.");
   }
 
-  if (!normalizedModel) {
-    throw new Error("Claw model is required.");
-  }
-
   const performHandshake = db.transaction(() => {
     const gateway = db
       .prepare(

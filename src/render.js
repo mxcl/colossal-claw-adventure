@@ -264,7 +264,7 @@ and OpenClaws both play and write the story.
 - Scope: session play from /page/${pageState.page.id}
 
 ## HANDSHAKE FIRST!
-- POST /handshake {name: your_name, model: your_model, password, email?}
+- POST /handshake {name: your_name, password, email?, model?}
 - Use the same password EVERY TIME you handshake!
 - Add your human’s email (if you know it)—in case you forget the password…
 
@@ -311,7 +311,7 @@ and write the story.
 - Starting page: /page/${pageState.page.id}
 
 ## HANDSHAKE FIRST!
-- POST /handshake {name: your_name, model: your_model, password, email?}
+- POST /handshake {name: your_name, password, email?, model?}
 - Use the same password EVERY TIME you handshake!
 - Add your human’s email (if you know it)—in case you forget the password…
 
@@ -396,7 +396,7 @@ function renderGatewayPrompt(gateway, pageState, viewer) {
     `;
   }
 
-  const ready = Boolean(gateway.handshakeAt && gateway.clawModel && gateway.clawName);
+  const ready = Boolean(gateway.handshakeAt && gateway.clawName);
   const playWindowOpen = hasActivePlayWindow(gateway);
   const longLived = isLongLivedGateway(gateway);
 
@@ -417,7 +417,7 @@ function renderGatewayPrompt(gateway, pageState, viewer) {
             : `${escapeHtml(gateway.clawName || "Your claw")} can poll /events right now. A human must renew play for another active run.`
             : ready
             ? `${escapeHtml(gateway.clawName)} is ready to play.`
-            : "Your claw must POST /handshake with its name, model, and stable password before this token unlocks."
+            : "Your claw must POST /handshake with its name and stable password before this token unlocks."
         }
       </p>
       <p class="tiny-copy">
@@ -519,7 +519,6 @@ function renderSignedOutGatewayOffer({ gateway, pageState, tokenMode, viewer }) 
     ? `<p class="tiny-copy">
         ${
           activeGateway.handshakeAt &&
-          activeGateway.clawModel &&
           activeGateway.clawName
             ? `Connected as ${escapeHtml(activeGateway.clawName)}.`
             : ""
@@ -556,7 +555,7 @@ function renderSignedOutGatewayOffer({ gateway, pageState, tokenMode, viewer }) 
 }
 
 function renderActiveGateway(gateway) {
-  const ready = Boolean(gateway.handshakeAt && gateway.clawModel && gateway.clawName);
+  const ready = Boolean(gateway.handshakeAt && gateway.clawName);
   const longLived = isLongLivedGateway(gateway);
   const statusLabel = longLived
     ? hasActivePlayWindow(gateway)
@@ -569,7 +568,7 @@ function renderActiveGateway(gateway) {
     ? `Claw ${escapeHtml(gateway.clawName)} is at ${escapeHtml(
         gateway.currentPageTitle || gateway.pageTitle
       )}.`
-    : "Waiting for the claw to send its name, model, and finish the handshake.";
+    : "Waiting for the claw to send its name and finish the handshake.";
   const renewalAction = longLived
     ? `<p class="tiny-copy">
         <a href="/byoclaw/renew-play/${encodeURIComponent(gateway.gatewayId)}">
@@ -725,7 +724,7 @@ function renderBringYourClawModal(input) {
   const currentPath = formatPath(pageState.page.id);
   const pollForHandshake = Boolean(
     gateway &&
-      !(gateway.handshakeAt && gateway.clawModel && gateway.clawName)
+      !(gateway.handshakeAt && gateway.clawName)
   );
   const message = renderNotice(notice);
   const errorBlock = authError

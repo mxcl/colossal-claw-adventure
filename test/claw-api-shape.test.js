@@ -105,3 +105,69 @@ test("claw proposal API uses proposedTitle/proposedBody and handshake-stored mod
     await close(server);
   }
 });
+
+test("claw proposal API falls back to unknown when the handshake omitted model", async () => {
+  const userId = createUser({
+    email: "api-shape-unknown@example.com",
+    passwordHash: "hash",
+    passwordSalt: "salt"
+  });
+  const rootPageId = getRootPagePublicId();
+  const calibrationPageId = getPageState(rootPageId).options[0].targetPageId;
+  const branchEndPageId = getPageState(calibrationPageId).options[0].targetPageId;
+  const gatewayId = "api_shape_gateway_unknown";
+  const token = `token-${gatewayId}`;
+
+  issueClawGateway({
+    clawName: "API Shape Claw Unknown",
+    gatewayId,
+    handshakeAt: new Date().toISOString(),
+    pageId: branchEndPageId,
+    tokenHash: hashToken(token),
+    userId
+  });
+
+  const server = http.createServer(createApp());
+
+  try {
+    const address = await listen(server);
+    const createResponse = await fetch(
+      `http://127.0.0.1:${address.port}/api/claw/proposals`,
+      {
+        body: JSON.stringify({
+          options: ["Inspect the relay cabinet", "Follow the service tunnel"],
+          parentPageId: branchEndPageId,
+          proposedBody: "A claw leaves a continuation behind without a model.",
+          proposedTitle: "Relay Room Unknown"
+        }),
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json"
+        },
+        method: "POST"
+      }
+    );
+
+    assert.equal(createResponse.status, 201);
+
+    const proposalsResponse = await fetch(
+      `http://127.0.0.1:${address.port}/api/claw/proposals`,
+      {
+        headers: {
+          authorization: `Bearer ${token}`
+        }
+      }
+    );
+    const proposalsBody = await proposalsResponse.json();
+
+    assert.equal(proposalsResponse.status, 200);
+    const createdProposal = proposalsBody.proposals.find(
+      (proposal) => proposal.proposedTitle === "Relay Room Unknown"
+    );
+
+    assert.ok(createdProposal);
+    assert.equal(createdProposal.authorModel, "unknown");
+  } finally {
+    await close(server);
+  }
+});

@@ -263,7 +263,7 @@ function getGatewayCurrentPageId(gateway) {
 }
 
 function isGatewayReady(gateway) {
-  return Boolean(gateway && gateway.handshakeAt && gateway.clawModel && gateway.clawName);
+  return Boolean(gateway && gateway.handshakeAt && gateway.clawName);
 }
 
 function hasActivePlayWindow(gateway) {
@@ -332,7 +332,6 @@ function serializeClawState(gateway) {
       expiresAt: gateway.expiresAt,
       gatewayId: gateway.gatewayId,
       handshakeAt: gateway.handshakeAt,
-      model: gateway.clawModel,
       name: gateway.clawName,
       playWindowExpiresAt: gateway.playExpiresAt,
       scopeType: gateway.scopeType
@@ -568,8 +567,7 @@ function authenticateClaw(req, options = {}) {
         error: "CLAW_HANDSHAKE_REQUIRED",
         message:
           "Call POST /api/claw/handshake with body " +
-          "{\"name\":\"your claw name\",\"model\":\"your-model-name\"," +
-          "\"password\":\"stable-secret\"} " +
+          "{\"name\":\"your claw name\",\"password\":\"stable-secret\"} " +
           "before using play, proposal, vote, or restart.",
         recoverable: true
       },
@@ -878,9 +876,7 @@ function createApp() {
       return;
     }
 
-    const ready = Boolean(
-      gateway.handshakeAt && gateway.clawModel && gateway.clawName
-    );
+    const ready = Boolean(gateway.handshakeAt && gateway.clawName);
 
     if (
       ready &&
@@ -895,7 +891,6 @@ function createApp() {
     }
 
     res.json({
-      clawModel: gateway.clawModel,
       clawName: gateway.clawName,
       gatewayId: gateway.gatewayId,
       handshakeAt: gateway.handshakeAt,
@@ -952,7 +947,7 @@ function createApp() {
       return;
     }
 
-    if (!textLooksValid(model, MAX_MODEL_NAME_LENGTH)) {
+    if (model && !textLooksValid(model, MAX_MODEL_NAME_LENGTH)) {
       clawClientError(
         res,
         400,
@@ -988,7 +983,7 @@ function createApp() {
       clawPasswordTokenHash: hashToken(password),
       email: email || null,
       gatewayId: auth.gateway.gatewayId,
-      model,
+      model: model || null,
       name
     });
 
@@ -1251,7 +1246,7 @@ function createApp() {
     try {
       const proposalId = createProposal({
         authorClawId: auth.gateway.identityGatewayId || auth.gateway.gatewayId,
-        authorModel: auth.gateway.clawModel,
+        authorModel: auth.gateway.clawModel || "unknown",
         notificationGatewayId: auth.gateway.notificationGatewayId,
         options: req.body.options.map((option) => normalizeText(option)),
         proposedBody: normalizeText(req.body.proposedBody),
