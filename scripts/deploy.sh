@@ -14,6 +14,8 @@ fi
 
 REMOTE="${1:-${DEPLOY_HOST:-}}"
 DEPLOY_PORT="${DEPLOY_PORT:-22}"
+SSH_IDENTITY_FILE="${SSH_IDENTITY_FILE:-}"
+SSH_EXTRA_OPTS="${SSH_EXTRA_OPTS:-}"
 REMOTE_APP_DIR="${REMOTE_APP_DIR:-/opt/${APP_NAME}}"
 REMOTE_DATA_DIR="${REMOTE_DATA_DIR:-/var/lib/${APP_NAME}}"
 REMOTE_ENV_FILE="${REMOTE_ENV_FILE:-/etc/${APP_NAME}.env}"
@@ -22,8 +24,9 @@ APP_PORT="${APP_PORT:-3000}"
 PUBLIC_HOSTNAME="${PUBLIC_HOSTNAME:-}"
 BASE_URL="${BASE_URL:-}"
 APP_NODE_ENV="${APP_NODE_ENV:-}"
+REVERSE_PROXY="${REVERSE_PROXY:-auto}"
 if [[ -z "${BASE_URL}" && -n "${PUBLIC_HOSTNAME}" ]]; then
-  BASE_URL="http://${PUBLIC_HOSTNAME}"
+  BASE_URL="https://${PUBLIC_HOSTNAME}"
 fi
 
 usage() {
@@ -34,14 +37,18 @@ Environment overrides:
   .env.production    Auto-loaded if present from repo root
   DEPLOY_HOST         Default SSH target if no positional host is given
   DEPLOY_PORT         SSH port
+  SSH_IDENTITY_FILE   SSH private key to use for ssh/rsync
+  SSH_EXTRA_OPTS      Additional ssh options (for example,
+                      '-o StrictHostKeyChecking=accept-new')
   REMOTE_APP_DIR      Remote app directory
   REMOTE_DATA_DIR     Remote data directory
   REMOTE_ENV_FILE     Remote environment file
   REMOTE_SERVICE      Remote systemd service name
-  APP_PORT            App listen port behind nginx
-  PUBLIC_HOSTNAME     Domain to serve with nginx on port 80
+  APP_PORT            App listen port behind the reverse proxy
+  PUBLIC_HOSTNAME     Domain served by the reverse proxy
   BASE_URL            Canonical base URL exposed to the app
   APP_NODE_ENV        Optional NODE_ENV value written to the app env file
+  REVERSE_PROXY       auto (default), nginx, or caddy
 EOF
 }
 
@@ -60,7 +67,22 @@ fi
 require_cmd ssh
 require_cmd rsync
 
-ssh -p "${DEPLOY_PORT}" "${REMOTE}" "
+ssh_args=(-p "${DEPLOY_PORT}")
+
+if [[ -n "${SSH_IDENTITY_FILE}" ]]; then
+  ssh_args+=(-i "${SSH_IDENTITY_FILE}")
+fi
+
+if [[ -n "${SSH_EXTRA_OPTS}" ]]; then
+  # shellcheck disable=SC2206
+  extra_ssh_args=(${SSH_EXTRA_OPTS})
+  ssh_args+=("${extra_ssh_args[@]}")
+fi
+
+printf -v rsync_ssh_cmd '%q ' ssh "${ssh_args[@]}"
+rsync_ssh_cmd="${rsync_ssh_cmd% }"
+
+ssh "${ssh_args[@]}" "${REMOTE}" "
 APP_USER=\$(id -un)
 APP_GROUP=\$(id -gn)
 if command -v sudo >/dev/null 2>&1; then
@@ -79,7 +101,7 @@ rsync -az --delete \
   --exclude "node_modules/" \
   --exclude "data/" \
   --exclude ".env*" \
-  -e "ssh -p ${DEPLOY_PORT}" \
+  -e "${rsync_ssh_cmd}" \
   "${ROOT_DIR}/" "${REMOTE}:${REMOTE_APP_DIR}/"
 
 remote_script=$(cat <<EOF
@@ -94,6 +116,7 @@ APP_PORT='${APP_PORT}'
 PUBLIC_HOSTNAME='${PUBLIC_HOSTNAME}'
 BASE_URL='${BASE_URL}'
 APP_NODE_ENV='${APP_NODE_ENV}'
+REVERSE_PROXY='${REVERSE_PROXY}'
 EXPECTED_HEAD_MARKER='<meta property="og:site_name" content="Colossal Claw Adventure">'
 APP_USER="\$(id -un)"
 APP_GROUP="\$(id -gn)"
@@ -222,10 +245,70 @@ NGINX
   fi
 }
 
+write_caddy_config() {
+  local caddy_conf="/etc/caddy/Caddyfile"
+
+  if [[ -z "\$PUBLIC_HOSTNAME" ]]; then
+    return
+  fi
+
+  cat <<'CADDY' | \
+    sed \
+      -e "s/__PUBLIC_HOSTNAME__/\${PUBLIC_HOSTNAME}/g" \
+      -e "s/__APP_PORT__/\${APP_PORT}/g" | \
+    \$SUDO tee "\$caddy_conf" >/dev/null
+{
+    storage file_system /var/lib/caddy
+}
+
+__PUBLIC_HOSTNAME__, www.__PUBLIC_HOSTNAME__ {
+    encode zstd gzip
+    reverse_proxy 127.0.0.1:__APP_PORT__
+}
+CADDY
+
+  \$SUDO systemctl disable --now nginx >/dev/null 2>&1 || true
+  \$SUDO systemctl enable caddy >/dev/null
+  \$SUDO systemctl restart caddy
+}
+
+configure_reverse_proxy() {
+  local proxy_mode="\$REVERSE_PROXY"
+
+  if [[ -z "\$PUBLIC_HOSTNAME" ]]; then
+    return
+  fi
+
+  if [[ "\$proxy_mode" == "auto" ]]; then
+    if command -v caddy >/dev/null 2>&1 || \
+      \$SUDO test -x /usr/local/bin/caddy || \
+      \$SUDO test -x /usr/bin/caddy; then
+      proxy_mode="caddy"
+    else
+      proxy_mode="nginx"
+    fi
+  fi
+
+  case "\$proxy_mode" in
+    caddy)
+      ensure_cmd caddy caddy caddy
+      write_caddy_config
+      ;;
+    nginx)
+      ensure_cmd nginx nginx nginx
+      \$SUDO systemctl disable --now caddy >/dev/null 2>&1 || true
+      write_nginx_config
+      ;;
+    *)
+      echo "Unsupported reverse proxy: \$proxy_mode" >&2
+      exit 1
+      ;;
+  esac
+}
+
 ensure_cmd rsync rsync rsync
 ensure_cmd curl curl curl
 ensure_node_runtime
-ensure_cmd nginx nginx nginx
 ensure_cmd make make make
 ensure_cmd python3 python3 python3
 ensure_cmd g++ gcc-c++ g++
@@ -403,7 +486,7 @@ RestartSec=5
 WantedBy=multi-user.target
 SERVICE
 
-write_nginx_config
+configure_reverse_proxy
 
 cd "\$APP_DIR"
 npm ci --omit=dev
@@ -422,4 +505,4 @@ verify_http_response
 EOF
 )
 
-printf '%s\n' "${remote_script}" | ssh -p "${DEPLOY_PORT}" "${REMOTE}" 'bash -s'
+printf '%s\n' "${remote_script}" | ssh "${ssh_args[@]}" "${REMOTE}" 'bash -s'
