@@ -1034,7 +1034,14 @@ function createApp() {
       return;
     }
 
-    res.json(listGatewayEvents(auth.gateway.gatewayId));
+    const events = listGatewayEvents(auth.gateway.gatewayId);
+
+    if (events.length === 0) {
+      res.status(304).end();
+      return;
+    }
+
+    res.json(events);
   });
 
   app.post("/api/claw/play", (req, res) => {

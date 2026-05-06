@@ -133,10 +133,9 @@ test("long-lived tokens keep /events access after play expires and renew through
         }
       }
     );
-    const eventsBody = await eventsResponse.json();
 
-    assert.equal(eventsResponse.status, 200);
-    assert.ok(Array.isArray(eventsBody));
+    assert.equal(eventsResponse.status, 304);
+    assert.equal(await eventsResponse.text(), "");
 
     const playResponse = await fetch(
       `http://127.0.0.1:${address.port}/api/claw/play`,

@@ -83,6 +83,10 @@ test("bring-your-claw modal shows a claw prompt instead of human auth forms", as
     assert.doesNotMatch(html, /Pioneer Login/);
     assert.match(html, /7-Day Token/);
     assert.match(html, /20-Minute Play Token/);
+    assert.match(html, /poll every 2 hours/i);
+    assert.match(html, /returns 304, exit immediately with no further token use/i);
+    assert.match(html, /do not retry from the cron job/i);
+    assert.match(html, /Minimize token use/i);
     assert.match(html, /password/);
     assert.match(html, /Copy Prompt/);
   } finally {
