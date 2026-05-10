@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+. "${ROOT_DIR}/scripts/lib/cli.sh"
+
 AWS_REGION="${AWS_REGION:-us-east-2}"
 AWS_AZ="${AWS_AZ:-${AWS_REGION}a}"
 INSTANCE_TYPE="${INSTANCE_TYPE:-t4g.nano}"
@@ -23,24 +26,29 @@ Environment overrides:
 EOF
 }
 
-require_cmd() {
-  if ! command -v "$1" >/dev/null 2>&1; then
-    echo "Missing required command: $1" >&2
-    exit 1
-  fi
-}
-
-first_line() {
-  awk 'NF { print; exit }'
-}
-
-require_cmd aws
-
 if [[ "${1:-}" == "--help" ]]; then
   usage
   exit 0
 fi
 
+first_line() {
+  awk 'NF { print; exit }'
+}
+
+cli_require_cmd aws "Install and configure the AWS CLI, then re-run this script."
+
+for name in APP_NAME DOMAIN INSTANCE_NAME KEY_NAME SECURITY_GROUP_NAME \
+  PUBLIC_KEY_PATH; do
+  cli_require_env "${name}"
+done
+
+cli_banner "AWS provision" "${INSTANCE_NAME}"
+cli_kv "region" "${AWS_REGION}"
+cli_kv "availability zone" "${AWS_AZ}"
+cli_kv "instance type" "${INSTANCE_TYPE}"
+cli_kv "domain" "${DOMAIN}"
+
+cli_step "Finding latest Amazon Linux 2023 ARM AMI"
 ami_id=$(
   aws ec2 describe-images \
     --owners amazon \
@@ -55,10 +63,11 @@ ami_id=$(
 )
 
 if [[ -z "${ami_id}" || "${ami_id}" == "None" ]]; then
-  echo "Unable to find a suitable Amazon Linux 2023 ARM AMI." >&2
-  exit 1
+  cli_die "Unable to find a suitable Amazon Linux 2023 ARM AMI." \
+    "Check AWS_REGION and AWS CLI credentials."
 fi
 
+cli_step "Resolving default VPC and subnet"
 vpc_id=$(
   aws ec2 describe-vpcs \
     --region "${AWS_REGION}" \
@@ -79,10 +88,11 @@ subnet_id=$(
 )
 
 if [[ -z "${subnet_id}" || "${subnet_id}" == "None" ]]; then
-  echo "Unable to find a default subnet in ${AWS_AZ}." >&2
-  exit 1
+  cli_die "Unable to find a default subnet in ${AWS_AZ}." \
+    "Choose an availability zone with a default subnet or create one first."
 fi
 
+cli_step "Ensuring EC2 key pair"
 if ! aws ec2 describe-key-pairs \
   --region "${AWS_REGION}" \
   --key-names "${KEY_NAME}" >/dev/null 2>&1; then
@@ -92,6 +102,7 @@ if ! aws ec2 describe-key-pairs \
     --public-key-material "fileb://${PUBLIC_KEY_PATH}" >/dev/null
 fi
 
+cli_step "Ensuring security group and public web ingress"
 security_group_id=$(
   aws ec2 describe-security-groups \
     --region "${AWS_REGION}" \
@@ -125,6 +136,7 @@ for port in 22 80 443; do
     >/dev/null 2>&1 || true
 done
 
+cli_step "Finding or creating EC2 instance"
 instance_id=$(
   aws ec2 describe-instances \
     --region "${AWS_REGION}" \
@@ -172,6 +184,7 @@ else
   fi
 fi
 
+cli_step "Waiting for instance health checks"
 aws ec2 wait instance-running \
   --region "${AWS_REGION}" \
   --instance-ids "${instance_id}"
@@ -179,6 +192,7 @@ aws ec2 wait instance-status-ok \
   --region "${AWS_REGION}" \
   --instance-ids "${instance_id}"
 
+cli_step "Ensuring Elastic IP association"
 allocation_id=$(
   aws ec2 describe-addresses \
     --region "${AWS_REGION}" \
@@ -220,6 +234,18 @@ public_dns=$(
     --query 'Reservations[0].Instances[0].PublicDnsName' \
     --output text
 )
+
+if [[ -t 1 ]]; then
+  cli_ok "Provisioning complete"
+  cli_section "Connection details"
+  cli_kv "instance id" "${instance_id}"
+  cli_kv "public ip" "${public_ip}"
+  cli_kv "public dns" "${public_dns}"
+  cli_kv "ami id" "${ami_id}"
+  cli_kv "security group" "${security_group_id}"
+  cli_kv "ssh target" "ec2-user@${public_ip}"
+  cli_kv "deploy url" "http://${DOMAIN}"
+fi
 
 cat <<EOF
 INSTANCE_ID=${instance_id}

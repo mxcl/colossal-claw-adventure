@@ -2,14 +2,17 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+. "${ROOT_DIR}/scripts/lib/cli.sh"
 
-REMOTE="${1:-${DEPLOY_HOST}}"
+REMOTE="${1:-${DEPLOY_HOST:-}}"
 DEPLOY_PORT="${DEPLOY_PORT:-22}"
 SSH_EXTRA_OPTS="${SSH_EXTRA_OPTS:-}"
 APP_PORT="${APP_PORT:-3000}"
 APP_NODE_ENV="${APP_NODE_ENV:-}"
 REVERSE_PROXY="${REVERSE_PROXY:-auto}"
-if [[ -z "${BASE_URL:-}" ]]; then
+PUBLIC_HOSTNAME="${PUBLIC_HOSTNAME:-}"
+BASE_URL="${BASE_URL:-}"
+if [[ -z "${BASE_URL}" && -n "${PUBLIC_HOSTNAME}" ]]; then
   BASE_URL="https://${PUBLIC_HOSTNAME}"
 fi
 
@@ -36,15 +39,30 @@ Environment overrides:
 EOF
 }
 
-require_cmd() {
-  if ! command -v "$1" >/dev/null 2>&1; then
-    echo "Missing required command: $1" >&2
-    exit 1
-  fi
-}
+if [[ "${1:-}" == "--help" ]]; then
+  usage
+  exit 0
+fi
 
-require_cmd ssh
-require_cmd rsync
+if [[ -z "${REMOTE}" ]]; then
+  usage >&2
+  cli_die "Missing deploy target" \
+    "Pass user@host or export DEPLOY_HOST before running scripts/deploy.sh."
+fi
+
+for name in APP_NAME REMOTE_APP_DIR REMOTE_DATA_DIR REMOTE_ENV_FILE \
+  REMOTE_SERVICE SSH_IDENTITY_FILE; do
+  cli_require_env "${name}"
+done
+
+cli_require_cmd ssh
+cli_require_cmd rsync
+
+cli_banner "Colossal Claw deploy" "${REMOTE}"
+cli_kv "app dir" "${REMOTE_APP_DIR}"
+cli_kv "data dir" "${REMOTE_DATA_DIR}"
+cli_kv "service" "${REMOTE_SERVICE}"
+cli_kv "base url" "${BASE_URL:-not set}"
 
 ssh_args=(-p "${DEPLOY_PORT}")
 
@@ -60,6 +78,8 @@ fi
 printf -v rsync_ssh_cmd '%q ' ssh "${ssh_args[@]}"
 rsync_ssh_cmd="${rsync_ssh_cmd% }"
 
+cli_step "Preparing remote directories"
+# shellcheck disable=SC2029
 ssh "${ssh_args[@]}" "${REMOTE}" "
 APP_USER=\$(id -un)
 APP_GROUP=\$(id -gn)
@@ -73,7 +93,9 @@ else
     '${REMOTE_APP_DIR}' '${REMOTE_DATA_DIR}'
 fi
 "
+cli_ok "Remote directories are ready"
 
+cli_step "Syncing application files"
 rsync -az --delete \
   --exclude ".git/" \
   --exclude "node_modules/" \
@@ -81,6 +103,7 @@ rsync -az --delete \
   --exclude ".env*" \
   -e "${rsync_ssh_cmd}" \
   "${ROOT_DIR}/" "${REMOTE}:${REMOTE_APP_DIR}/"
+cli_ok "Application files synced"
 
 remote_script=$(cat <<EOF
 set -euo pipefail
@@ -483,4 +506,6 @@ verify_http_response
 EOF
 )
 
+cli_step "Installing dependencies and restarting service"
 printf '%s\n' "${remote_script}" | ssh "${ssh_args[@]}" "${REMOTE}" 'bash -s'
+cli_ok "Deployment finished"
