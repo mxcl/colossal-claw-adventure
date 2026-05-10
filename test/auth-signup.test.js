@@ -51,12 +51,24 @@ function toCookieHeader(cookies) {
   return cookies.map((cookie) => cookie.split(";", 1)[0]).join("; ");
 }
 
-function parsePrompt(html) {
-  const tokenMatch = html.match(/Authorization: Bearer ([A-Za-z0-9_-]+)/);
+async function parsePrompt(html, baseUrl, cookieHeader) {
+  const promptPathMatch = html.match(/data-copy-gateway-prompt="([^"]+)"/);
   const statusPathMatch = html.match(/data-gateway-status-path="([^"]+)"/);
 
-  assert.ok(tokenMatch, "expected a bearer token in the prompt");
+  assert.ok(promptPathMatch, "expected a prompt copy path in the modal");
   assert.ok(statusPathMatch, "expected a handshake status path in the modal");
+  assert.doesNotMatch(html, /Authorization: Bearer [A-Za-z0-9_-]+/);
+
+  const promptResponse = await fetch(`${baseUrl}${promptPathMatch[1]}`, {
+    headers: {
+      cookie: cookieHeader
+    }
+  });
+  const promptBody = await promptResponse.json();
+
+  assert.equal(promptResponse.status, 200);
+  const tokenMatch = promptBody.prompt.match(/Authorization: Bearer ([A-Za-z0-9_-]+)/);
+  assert.ok(tokenMatch, "expected a bearer token in the copied prompt");
 
   return {
     statusPath: statusPathMatch[1],
@@ -69,9 +81,10 @@ test("bring-your-claw modal shows a claw prompt instead of human auth forms", as
 
   try {
     const address = await listen(server);
+    const baseUrl = `http://127.0.0.1:${address.port}`;
     const rootPageId = getRootPagePublicId();
     const response = await fetch(
-      `http://127.0.0.1:${address.port}/page/${rootPageId}?byoclaw=1`
+      `${baseUrl}/page/${rootPageId}?byoclaw=1`
     );
     const html = await response.text();
 
@@ -81,13 +94,11 @@ test("bring-your-claw modal shows a claw prompt instead of human auth forms", as
     assert.doesNotMatch(html, /Confirm Password/);
     assert.doesNotMatch(html, /Connect an OpenClaw/);
     assert.doesNotMatch(html, /Pioneer Login/);
+    assert.doesNotMatch(html, /Authorization: Bearer [A-Za-z0-9_-]+/);
+    assert.doesNotMatch(html, /Inspect prompt/);
     assert.match(html, /7-Day Token/);
     assert.match(html, /20-Minute Play Token/);
-    assert.match(html, /poll every 2 hours/i);
-    assert.match(html, /returns 304, exit immediately with no further token use/i);
-    assert.match(html, /do not retry from the cron job/i);
-    assert.match(html, /Minimize token use/i);
-    assert.match(html, /password/);
+    assert.match(html, /data-copy-gateway-prompt="\/byoclaw\/prompt\//);
     assert.match(html, /Copy Prompt/);
   } finally {
     await close(server);
@@ -99,21 +110,26 @@ test("handshake creates a browser session and stable token reuse updates email",
 
   try {
     const address = await listen(server);
+    const baseUrl = `http://127.0.0.1:${address.port}`;
     const rootPageId = getRootPagePublicId();
     const rootPageState = getPageState(rootPageId);
     const firstOptionId = rootPageState.options[0].id;
     const password = "quantum-proof-".repeat(5);
 
     const firstPromptResponse = await fetch(
-      `http://127.0.0.1:${address.port}/page/${rootPageId}?byoclaw=1`
+      `${baseUrl}/page/${rootPageId}?byoclaw=1`
     );
     const firstPromptHtml = await firstPromptResponse.text();
-    const firstPrompt = parsePrompt(firstPromptHtml);
     const firstCookies = getSetCookies(firstPromptResponse);
     const firstCookieHeader = toCookieHeader(firstCookies);
+    const firstPrompt = await parsePrompt(
+      firstPromptHtml,
+      baseUrl,
+      firstCookieHeader
+    );
 
     const firstHandshakeResponse = await fetch(
-      `http://127.0.0.1:${address.port}/api/claw/handshake`,
+      `${baseUrl}/api/claw/handshake`,
       {
         body: JSON.stringify({
           email: "pioneer-one@example.com",
@@ -133,7 +149,7 @@ test("handshake creates a browser session and stable token reuse updates email",
     assert.equal(firstHandshakeBody.claw.name, "Pioneer Claw");
 
     const firstStatusResponse = await fetch(
-      `http://127.0.0.1:${address.port}${firstPrompt.statusPath}`,
+      `${baseUrl}${firstPrompt.statusPath}`,
       {
         headers: {
           cookie: firstCookieHeader
@@ -151,7 +167,7 @@ test("handshake creates a browser session and stable token reuse updates email",
     assert.ok(firstSessionCookie, "expected status polling to mint a session");
 
     const routeResponse = await fetch(
-      `http://127.0.0.1:${address.port}/page/${rootPageId}/${firstOptionId}`,
+      `${baseUrl}/page/${rootPageId}/${firstOptionId}`,
       {
         headers: {
           cookie: firstSessionCookie.split(";", 1)[0]
@@ -165,15 +181,19 @@ test("handshake creates a browser session and stable token reuse updates email",
     assert.ok(firstUser);
 
     const secondPromptResponse = await fetch(
-      `http://127.0.0.1:${address.port}/page/${rootPageId}?byoclaw=1`
+      `${baseUrl}/page/${rootPageId}?byoclaw=1`
     );
     const secondPromptHtml = await secondPromptResponse.text();
-    const secondPrompt = parsePrompt(secondPromptHtml);
     const secondCookies = getSetCookies(secondPromptResponse);
     const secondCookieHeader = toCookieHeader(secondCookies);
+    const secondPrompt = await parsePrompt(
+      secondPromptHtml,
+      baseUrl,
+      secondCookieHeader
+    );
 
     const secondHandshakeResponse = await fetch(
-      `http://127.0.0.1:${address.port}/api/claw/handshake`,
+      `${baseUrl}/api/claw/handshake`,
       {
         body: JSON.stringify({
           email: "pioneer-two@example.com",
@@ -191,7 +211,7 @@ test("handshake creates a browser session and stable token reuse updates email",
     assert.equal(secondHandshakeResponse.status, 200);
 
     const secondStatusResponse = await fetch(
-      `http://127.0.0.1:${address.port}${secondPrompt.statusPath}`,
+      `${baseUrl}${secondPrompt.statusPath}`,
       {
         headers: {
           cookie: secondCookieHeader
@@ -218,6 +238,7 @@ test("stable handshakes keep one claw identity and block voting on prior proposa
 
   try {
     const address = await listen(server);
+    const baseUrl = `http://127.0.0.1:${address.port}`;
     const rootPageId = getRootPagePublicId();
     const rootPageState = getPageState(rootPageId);
     const firstOptionId = rootPageState.options[0].id;
@@ -228,11 +249,15 @@ test("stable handshakes keep one claw identity and block voting on prior proposa
     const password = "stable-claw-password-".repeat(3);
 
     const firstPromptResponse = await fetch(
-      `http://127.0.0.1:${address.port}/page/${rootPageId}?byoclaw=1`
+      `${baseUrl}/page/${rootPageId}?byoclaw=1`
     );
-    const firstPrompt = parsePrompt(await firstPromptResponse.text());
+    const firstPrompt = await parsePrompt(
+      await firstPromptResponse.text(),
+      baseUrl,
+      toCookieHeader(getSetCookies(firstPromptResponse))
+    );
     const firstHandshakeResponse = await fetch(
-      `http://127.0.0.1:${address.port}/api/claw/handshake`,
+      `${baseUrl}/api/claw/handshake`,
       {
         body: JSON.stringify({
           name: "Pioneer Claw",
@@ -251,7 +276,7 @@ test("stable handshakes keep one claw identity and block voting on prior proposa
     const firstGateway = findGatewayByTokenHash(hashToken(firstPrompt.token));
     assert.ok(firstGateway);
 
-    await fetch(`http://127.0.0.1:${address.port}/api/claw/play`, {
+    await fetch(`${baseUrl}/api/claw/play`, {
       body: JSON.stringify({ optionId: firstOptionId }),
       headers: {
         authorization: `Bearer ${firstPrompt.token}`,
@@ -259,7 +284,7 @@ test("stable handshakes keep one claw identity and block voting on prior proposa
       },
       method: "POST"
     });
-    await fetch(`http://127.0.0.1:${address.port}/api/claw/play`, {
+    await fetch(`${baseUrl}/api/claw/play`, {
       body: JSON.stringify({ optionId: secondOptionId }),
       headers: {
         authorization: `Bearer ${firstPrompt.token}`,
@@ -269,7 +294,7 @@ test("stable handshakes keep one claw identity and block voting on prior proposa
     });
 
     const proposalResponse = await fetch(
-      `http://127.0.0.1:${address.port}/api/claw/proposals`,
+      `${baseUrl}/api/claw/proposals`,
       {
         body: JSON.stringify({
           afterPageId: branchEndPageId,
@@ -290,11 +315,15 @@ test("stable handshakes keep one claw identity and block voting on prior proposa
     assert.ok(proposalBody.proposalId);
 
     const secondPromptResponse = await fetch(
-      `http://127.0.0.1:${address.port}/page/${rootPageId}?byoclaw=1`
+      `${baseUrl}/page/${rootPageId}?byoclaw=1`
     );
-    const secondPrompt = parsePrompt(await secondPromptResponse.text());
+    const secondPrompt = await parsePrompt(
+      await secondPromptResponse.text(),
+      baseUrl,
+      toCookieHeader(getSetCookies(secondPromptResponse))
+    );
     const secondHandshakeResponse = await fetch(
-      `http://127.0.0.1:${address.port}/api/claw/handshake`,
+      `${baseUrl}/api/claw/handshake`,
       {
         body: JSON.stringify({
           name: "Pioneer Claw Again",
@@ -314,7 +343,7 @@ test("stable handshakes keep one claw identity and block voting on prior proposa
     assert.ok(secondGateway);
     assert.equal(secondGateway.identityGatewayId, firstGateway.identityGatewayId);
 
-    await fetch(`http://127.0.0.1:${address.port}/api/claw/play`, {
+    await fetch(`${baseUrl}/api/claw/play`, {
       body: JSON.stringify({ optionId: firstOptionId }),
       headers: {
         authorization: `Bearer ${secondPrompt.token}`,
@@ -322,7 +351,7 @@ test("stable handshakes keep one claw identity and block voting on prior proposa
       },
       method: "POST"
     });
-    await fetch(`http://127.0.0.1:${address.port}/api/claw/play`, {
+    await fetch(`${baseUrl}/api/claw/play`, {
       body: JSON.stringify({ optionId: secondOptionId }),
       headers: {
         authorization: `Bearer ${secondPrompt.token}`,
@@ -332,7 +361,7 @@ test("stable handshakes keep one claw identity and block voting on prior proposa
     });
 
     const voteResponse = await fetch(
-      `http://127.0.0.1:${address.port}/api/claw/proposals/${proposalBody.proposalId}/vote`,
+      `${baseUrl}/api/claw/proposals/${proposalBody.proposalId}/vote`,
       {
         headers: {
           authorization: `Bearer ${secondPrompt.token}`

@@ -94,8 +94,85 @@ test("bring-your-claw modal defaults to the 7-day token option", async () => {
       html,
       /name="tokenMode"[\s\S]*value="long_lived"[\s\S]*checked/
     );
-    assert.match(html, /7 days with a renewable 20-minute play window/);
-    assert.match(html, /20 minutes of play only/);
+    assert.match(html, /7-day token \+ renew play/);
+    assert.match(html, /20-minute run only/);
+  } finally {
+    await close(server);
+  }
+});
+
+test("claw activity renders in a separate page modal", async () => {
+  const runId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const userId = createUser({
+    email: `activity-modal-${runId}@example.com`,
+    passwordHash: "hash",
+    passwordSalt: "salt"
+  });
+  const session = buildSessionRecord(userId);
+  const rootPageId = getRootPagePublicId();
+  const gatewayId = `activity_modal_${runId}`;
+
+  createSession(session);
+  createReadyGateway({
+    gatewayId,
+    pageId: rootPageId,
+    userId
+  });
+
+  const server = http.createServer(createApp());
+
+  try {
+    const address = await listen(server);
+    const pageResponse = await fetch(
+      `http://127.0.0.1:${address.port}/page/${rootPageId}`,
+      {
+        headers: {
+          cookie: `cca_session=${session.token}`
+        }
+      }
+    );
+    const pageHtml = await pageResponse.text();
+
+    assert.equal(pageResponse.status, 200);
+    assert.match(pageHtml, /data-open-claw-activity/);
+    assert.match(
+      pageHtml,
+      new RegExp(`href="/page/${rootPageId}\\?clawactivity=1"`)
+    );
+    assert.match(pageHtml, /data-claw-activity-modal[\s\S]*hidden/);
+
+    const bringResponse = await fetch(
+      `http://127.0.0.1:${address.port}/page/${rootPageId}?byoclaw=1`,
+      {
+        headers: {
+          cookie: `cca_session=${session.token}`
+        }
+      }
+    );
+    const bringHtml = await bringResponse.text();
+    const bringModalHtml = bringHtml.slice(
+      bringHtml.indexOf("data-bring-your-claw-modal"),
+      bringHtml.indexOf("data-claw-activity-modal")
+    );
+
+    assert.doesNotMatch(bringModalHtml, /Claw Activity/);
+    assert.doesNotMatch(bringModalHtml, /Session trail/);
+
+    const activityResponse = await fetch(
+      `http://127.0.0.1:${address.port}/page/${rootPageId}?clawactivity=1`,
+      {
+        headers: {
+          cookie: `cca_session=${session.token}`
+        }
+      }
+    );
+    const activityHtml = await activityResponse.text();
+
+    assert.equal(activityResponse.status, 200);
+    assert.match(activityHtml, /data-activity-modal-open="1"/);
+    assert.match(activityHtml, /data-claw-activity-modal\s*>/);
+    assert.match(activityHtml, /Session trail/);
+    assert.match(activityHtml, /Handshake completed as/);
   } finally {
     await close(server);
   }

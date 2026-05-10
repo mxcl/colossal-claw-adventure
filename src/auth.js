@@ -3,6 +3,7 @@ const crypto = require("node:crypto");
 const { SESSION_COOKIE_NAME } = require("./env");
 const HUMAN_PLAYER_COOKIE_NAME = "cca_human_player";
 const PENDING_GATEWAY_COOKIE_NAME = "cca_pending_gateway";
+const GATEWAY_PROMPT_COOKIE_NAME = "cca_gateway_prompt";
 
 function randomToken(bytes = 24) {
   return crypto.randomBytes(bytes).toString("hex");
@@ -114,6 +115,19 @@ function setPendingGatewayCookie(res, gatewayId, maxAgeSeconds) {
   );
 }
 
+function setGatewayPromptCookie(res, gatewayId, token, maxAgeSeconds = 10 * 60) {
+  appendSetCookie(
+    res,
+    serializeCookie(GATEWAY_PROMPT_COOKIE_NAME, `${gatewayId}:${token}`, {
+      httpOnly: true,
+      maxAge: maxAgeSeconds,
+      path: `/byoclaw/prompt/${encodeURIComponent(gatewayId)}`,
+      sameSite: "Lax",
+      secure: process.env.NODE_ENV === "production"
+    })
+  );
+}
+
 function clearSessionCookie(res) {
   appendSetCookie(
     res,
@@ -155,12 +169,14 @@ module.exports = {
   buildSessionRecord,
   clearPendingGatewayCookie,
   clearSessionCookie,
+  GATEWAY_PROMPT_COOKIE_NAME,
   hashToken,
   HUMAN_PLAYER_COOKIE_NAME,
   PENDING_GATEWAY_COOKIE_NAME,
   parseCookies,
   randomBase64UrlToken,
   randomToken,
+  setGatewayPromptCookie,
   setHumanPlayerCookie,
   setSessionCookie,
   setPendingGatewayCookie

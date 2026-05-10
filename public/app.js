@@ -1,8 +1,10 @@
 (function () {
   const modal = document.querySelector("[data-bring-your-claw-modal]");
+  const activityModal = document.querySelector("[data-claw-activity-modal]");
+  const openActivityButtons = document.querySelectorAll("[data-open-claw-activity]");
+  const closeActivityButtons = document.querySelectorAll("[data-close-claw-activity]");
   const closeButtons = document.querySelectorAll("[data-close-bring-your-claw]");
   const copyButton = document.querySelector("[data-copy-gateway-prompt]");
-  const promptBlock = document.querySelector("[data-gateway-prompt] code");
   const gatewayStatusPath = modal
     ? modal.getAttribute("data-gateway-status-path") || ""
     : "";
@@ -56,6 +58,28 @@
     if (url.searchParams.has("byoclaw") || url.searchParams.has("issue")) {
       url.searchParams.delete("byoclaw");
       url.searchParams.delete("issue");
+      const next =
+        url.pathname +
+        (url.searchParams.toString() ? `?${url.searchParams.toString()}` : "") +
+        url.hash;
+      window.history.replaceState({}, "", next);
+    }
+  }
+
+  function openActivityModal() {
+    if (activityModal) {
+      activityModal.hidden = false;
+    }
+  }
+
+  function closeActivityModal() {
+    if (activityModal) {
+      activityModal.hidden = true;
+    }
+
+    const url = new URL(window.location.href);
+    if (url.searchParams.has("clawactivity")) {
+      url.searchParams.delete("clawactivity");
       const next =
         url.pathname +
         (url.searchParams.toString() ? `?${url.searchParams.toString()}` : "") +
@@ -121,10 +145,44 @@
     });
   });
 
+  openActivityButtons.forEach((button) => {
+    button.addEventListener("click", (event) => {
+      if (!activityModal) {
+        return;
+      }
+
+      event.preventDefault();
+      openActivityModal();
+
+      const url = new URL(window.location.href);
+      url.searchParams.set("clawactivity", "1");
+      const next =
+        url.pathname +
+        (url.searchParams.toString() ? `?${url.searchParams.toString()}` : "") +
+        url.hash;
+      window.history.replaceState({}, "", next);
+    });
+  });
+
+  closeActivityButtons.forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      closeActivityModal();
+    });
+  });
+
   if (modal) {
     modal.addEventListener("click", (event) => {
       if (event.target === modal) {
         closeModal();
+      }
+    });
+  }
+
+  if (activityModal) {
+    activityModal.addEventListener("click", (event) => {
+      if (event.target === activityModal) {
+        closeActivityModal();
       }
     });
   }
@@ -134,12 +192,33 @@
     startHandshakePolling();
   }
 
-  if (copyButton && promptBlock) {
+  if (document.body.getAttribute("data-activity-modal-open") === "1") {
+    openActivityModal();
+  }
+
+  if (copyButton) {
     copyButton.addEventListener("click", async () => {
       const originalLabel = copyButton.textContent;
+      const promptPath = copyButton.getAttribute("data-copy-gateway-prompt");
 
       try {
-        await copyText(promptBlock.textContent || "");
+        if (!promptPath) {
+          throw new Error("Prompt path missing.");
+        }
+
+        const response = await fetch(promptPath, {
+          credentials: "same-origin",
+          headers: {
+            Accept: "application/json"
+          }
+        });
+
+        if (!response.ok) {
+          throw new Error("Prompt is no longer available.");
+        }
+
+        const body = await response.json();
+        await copyText(body.prompt || "");
         copyButton.textContent = "Copied Prompt";
       } catch (_error) {
         copyButton.textContent = "Copy Failed";

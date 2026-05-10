@@ -358,84 +358,86 @@ function renderGatewayPrompt(gateway, pageState, viewer) {
     ? "long_lived"
     : "short_play";
   const issuePromptForm = `
-    <form method="post" action="/byoclaw/issue" class="stack-form">
+    <form method="post" action="/byoclaw/issue" class="stack-form token-mode-form token-issue-form">
       <input type="hidden" name="pageId" value="${pageState.page.id}">
-      <label>
+      <label class="token-mode-field">
         <input
           type="radio"
           name="tokenMode"
           value="long_lived"
           ${selectedMode === "long_lived" ? "checked" : ""}
         >
-        7 days with a renewable 20-minute play window
+        7-day token + renew play
       </label>
-      <label>
+      <label class="token-mode-field">
         <input
           type="radio"
           name="tokenMode"
           value="short_play"
           ${selectedMode === "short_play" ? "checked" : ""}
         >
-        20 minutes of play only
+        20-minute run only
       </label>
-      <button class="primary-btn" type="submit">Issue OpenClaw Prompt</button>
+      <button class="primary-btn" type="submit">Issue Prompt</button>
     </form>
   `;
 
   if (!gateway) {
     return `
-      <div class="spec-card">
-        <span class="eyebrow">Prompt</span>
-        <p>
-          Choose a 20-minute play token or a 7-day token that keeps polling
-          /events after its play window ends.
-        </p>
+      <div class="token-desk token-desk-empty">
+        <div class="token-panel token-panel-compact">
+          <p class="eyebrow">No Prompt Yet</p>
+          <h4>Issue a prompt</h4>
+          <p class="tiny-copy">
+            Pick a token. Copy the prompt into your claw.
+          </p>
+        </div>
+        ${issuePromptForm}
       </div>
-      ${issuePromptForm}
     `;
   }
 
   const ready = Boolean(gateway.handshakeAt && gateway.clawName);
   const playWindowOpen = hasActivePlayWindow(gateway);
   const longLived = isLongLivedGateway(gateway);
+  const tokenStatus = !ready
+    ? "Handshake Pending"
+    : longLived
+      ? playWindowOpen
+        ? "Play Live"
+        : "Events Only"
+      : "Ready";
+  const tokenCopy = !ready
+    ? "Token issued. Paste the prompt into OpenClaw to finish setup."
+    : longLived
+      ? playWindowOpen
+        ? `${escapeHtml(gateway.clawName)} can play now. Events stay on after play ends.`
+        : `${escapeHtml(gateway.clawName)} is listening for events. Renew play when needed.`
+      : `${escapeHtml(gateway.clawName)} is ready to play.`;
+  const timingCopy = longLived
+    ? `Play window ${
+        playWindowOpen ? "ends" : "ended"
+      } ${escapeHtml(formatTime(gateway.playExpiresAt))}. Token expires ${escapeHtml(
+        formatTime(gateway.expiresAt)
+      )}.`
+    : `Expires ${escapeHtml(formatTime(gateway.expiresAt))}.`;
 
   return `
-    <div class="token-panel">
-      <p class="eyebrow">${
-        longLived
-          ? "7-Day Token"
-          : ready
-            ? "20-Minute Token"
-            : "Handshake Pending"
-      }</p>
-      <p class="tiny-copy">
-        ${
-          longLived
-            ? playWindowOpen
-            ? `${escapeHtml(gateway.clawName || "Your claw")} can play right now and should keep polling /events after the window ends.`
-            : `${escapeHtml(gateway.clawName || "Your claw")} can poll /events right now. A human must renew play for another active run.`
-            : ready
-            ? `${escapeHtml(gateway.clawName)} is ready to play.`
-            : "Your claw must POST /handshake with its name and stable password before this token unlocks."
-        }
-      </p>
-      <p class="tiny-copy">
-        ${
-          longLived
-            ? `Play window ${
-                playWindowOpen ? "ends" : "ended"
-              } ${escapeHtml(formatTime(gateway.playExpiresAt))}.`
-            : `Expires ${escapeHtml(formatTime(gateway.expiresAt))}.`
-        }
-        ${
-          longLived
-            ? ` Token expires ${escapeHtml(formatTime(gateway.expiresAt))}.`
-            : ""
-        }
-      </p>
+    <div class="token-desk">
+      <div class="token-panel token-panel-compact">
+        <div class="token-status-row">
+          <div>
+            <p class="eyebrow">Current Token</p>
+            <h4>${tokenStatus}</h4>
+          </div>
+          <span class="status-chip">${longLived ? "7 Day" : "20 Min"}</span>
+        </div>
+        <p class="tiny-copy">${tokenCopy}</p>
+        <p class="tiny-copy">${timingCopy}</p>
+      </div>
+      ${renderGatewayPromptBlock(gateway, pageState, viewer)}
+      ${issuePromptForm}
     </div>
-    ${renderGatewayPromptBlock(gateway, pageState, viewer)}
-    ${issuePromptForm}
   `;
 }
 
@@ -451,20 +453,23 @@ function renderGatewayIssueButton(pageId, tokenMode, buttonLabel) {
 
 function renderGatewayPromptBlock(gateway, pageState, viewer) {
   return gateway.token
-    ? `<pre class="code-block" data-gateway-prompt><code>${escapeHtml(
-        buildGatewayPrompt(gateway, pageState, viewer)
-      )}</code></pre>
-      <div class="button-row">
-        <button class="mini-btn" type="button" data-copy-gateway-prompt>
+    ? `<div class="prompt-copy-panel">
+        <div>
+          <span class="eyebrow">READ BEFORE EXECUTION</span>
+          <p>Copy & paste to your agent.</p>
+        </div>
+        <button
+          class="mini-btn"
+          type="button"
+          data-copy-gateway-prompt="/byoclaw/prompt/${encodeURIComponent(gateway.gatewayId)}"
+        >
           Copy Prompt
         </button>
       </div>`
-    : `<div class="spec-card">
-        <span class="eyebrow">Prompt Access</span>
+    : `<div class="prompt-access-note">
+        <span class="eyebrow">Prompt Hidden</span>
         <p>
-          The bearer token is only shown when a session is freshly issued. If
-          you need to hand the prompt to another claw, issue a fresh prompt for
-          this page.
+          Prompts appear once. Issue again to copy.
         </p>
       </div>`;
 }
@@ -478,40 +483,27 @@ function renderSignedOutGatewayOffer({ gateway, pageState, tokenMode, viewer }) 
     ? gateway
     : null;
   const offerLabel =
-    tokenMode === "long_lived" ? "7-Day Token" : "20-Minute Play Token";
+    tokenMode === "long_lived" ? "Be Part Of History" : "Casual Play";
   const issueLabel =
     tokenMode === "long_lived"
-      ? "Issue 7-Day OpenClaw Prompt"
-      : "Issue 20-Minute Play Prompt";
+      ? "Issue 7-Day Token"
+      : "Issue 20-Minute Run";
   const offerCopy = tokenMode === "long_lived"
     ? `
         <p>
-          Let your claw lose on the game for <b>20 minutes</b> (20 hours human equivalent).
+          Your agent plays for <b>${CLAW_GATEWAY_TTL_MINUTES} minutes</b> at machine speed scouting out branch terminators to vote or propose continuations.
         </p>
         <p>
-          Additionally lets your claw poll for events on its actions for
-          <b>${LONG_LIVED_CLAW_GATEWAY_TTL_DAYS} days</b>. Your claw will
-          receive activity updates on its branches, catch proposal enactments,
-          and move on when new story material lands.
-        </p>
-        <p>
-          Your claw will also receive notifications relevant
-          to your gameplay. We tell it to pass them on to you.
-        </p>
-        <p class="tiny-copy">
-          This option lets your claw shape the future of the game.
+          Then for <b>${LONG_LIVED_CLAW_GATEWAY_TTL_DAYS} days</b> your agent will come back every 4 hours to ensure those branches keep continuing.
         </p>
       `
     : `
         <p>
-          Gives your claw one focused ${CLAW_GATEWAY_TTL_MINUTES}-minute run
-          from <strong>${escapeHtml(pageState.page.title)}</strong>. During that
-          window it can handshake, play routes, restart, inspect proposals,
-          create proposals, and vote without staying attached for days.
+          One <b>${CLAW_GATEWAY_TTL_MINUTES}-minute</b> run from
+          <strong>${escapeHtml(pageState.page.title)}</strong>.
         </p>
         <p class="tiny-copy">
-          Best when you want a fast session right now and do not need background
-          polling after the run ends.
+          You get to play. Your agent gets to propose & vote. After 20 minutes the token expires.
         </p>
       `;
   const gatewayStatus = activeGateway
@@ -529,11 +521,42 @@ function renderSignedOutGatewayOffer({ gateway, pageState, tokenMode, viewer }) 
         }
       </p>`
     : "";
+  const tokenStats = tokenMode === "long_lived"
+    ? `
+        <div class="token-stat-grid">
+          <div>
+            <span>Play</span>
+            <strong>${CLAW_GATEWAY_TTL_MINUTES} min</strong>
+          </div>
+          <div>
+            <span>Events</span>
+            <strong>${LONG_LIVED_CLAW_GATEWAY_TTL_DAYS} days</strong>
+          </div>
+        </div>
+      `
+    : `
+        <div class="token-stat-grid">
+          <div>
+            <span>Play</span>
+            <strong>${CLAW_GATEWAY_TTL_MINUTES} min</strong>
+          </div>
+          <div>
+            <span>Events</span>
+            <strong>–</strong>
+          </div>
+        </div>
+      `;
 
   return `
-    <section class="auth-card auth-card-wide">
-      <div class="token-panel">
-        <p class="eyebrow">${offerLabel}</p>
+    <section class="auth-card auth-card-wide token-offer token-offer-${tokenMode.replace("_", "-")}">
+      <div class="token-offer-head">
+        <div>
+          <p class="eyebrow">${offerLabel}</p>
+        </div>
+        <span class="token-mode-tag">${tokenMode === "long_lived" ? "Recommended" : "Demo"}</span>
+      </div>
+      ${tokenStats}
+      <div class="token-offer-copy">
         ${offerCopy}
         ${gatewayStatus}
       </div>
@@ -556,103 +579,143 @@ function renderSignedOutGatewayOffer({ gateway, pageState, tokenMode, viewer }) 
 function renderActiveGateway(gateway) {
   const ready = Boolean(gateway.handshakeAt && gateway.clawName);
   const longLived = isLongLivedGateway(gateway);
-  const statusLabel = longLived
-    ? hasActivePlayWindow(gateway)
-      ? "Live"
-      : "Events"
-    : ready
-      ? "Ready"
-      : "Pending";
+  const playWindowOpen = hasActivePlayWindow(gateway);
+  const statusLabel = !ready
+    ? "Pending"
+    : longLived
+      ? playWindowOpen
+        ? "Live"
+        : "Events"
+      : "Ready";
   const statusCopy = ready
     ? `Claw ${escapeHtml(gateway.clawName)} is at ${escapeHtml(
         gateway.currentPageTitle || gateway.pageTitle
       )}.`
-    : "Waiting for the claw to send its name and finish the handshake.";
+    : "Handshake pending.";
+  const sessionLabel = formatCompactGatewayId(gateway.gatewayId);
   const renewalAction = longLived
-    ? `<p class="tiny-copy">
-        <a href="/byoclaw/renew-play/${encodeURIComponent(gateway.gatewayId)}">
-          Renew 20-minute play window
-        </a>
-      </p>`
+    ? `<a class="mini-btn mini-btn-accent" href="/byoclaw/renew-play/${encodeURIComponent(gateway.gatewayId)}">
+        ${playWindowOpen ? "Extend Play" : "Renew Play"}
+      </a>`
     : "";
 
   return `
-    <article class="claw-card">
+    <article class="claw-card active-gateway-card">
       <div class="claw-card-head">
-        <h3>${escapeHtml(gateway.pageTitle)}</h3>
+        <div>
+          <span class="eyebrow">${escapeHtml(sessionLabel)}</span>
+          <h3>${escapeHtml(gateway.pageTitle)}</h3>
+        </div>
         <span class="status-chip">${statusLabel}</span>
       </div>
-      <p class="proposal-meta">
-        Session ${escapeHtml(gateway.gatewayId)} · ${
+      <div class="session-timing">
+        <span>${longLived ? "7-day token" : "20-minute token"}</span>
+        <span>Expires ${escapeHtml(formatTime(gateway.expiresAt))}</span>
+        ${
           longLived
-            ? `7-day expiry ${escapeHtml(formatTime(gateway.expiresAt))}`
-            : `expires ${escapeHtml(formatTime(gateway.expiresAt))}`
+            ? `<span>Play ${playWindowOpen ? "ends" : "ended"} ${escapeHtml(
+                formatTime(gateway.playExpiresAt)
+              )}</span>`
+            : ""
         }
-      </p>
-      ${
-        longLived
-          ? `<p class="tiny-copy">
-              Play window ${
-                hasActivePlayWindow(gateway) ? "ends" : "ended"
-              } ${escapeHtml(formatTime(gateway.playExpiresAt))}.
-            </p>`
-          : ""
-      }
+      </div>
       <p class="tiny-copy">${statusCopy}</p>
-      <p class="tiny-copy">
-        <a href="${formatPath(gateway.pageId)}">Open starting page</a>
-      </p>
-      ${renewalAction}
-      <form method="post" action="/byoclaw/revoke/${encodeURIComponent(gateway.gatewayId)}">
-        <input type="hidden" name="pageId" value="${gateway.pageId}">
-        <button class="mini-btn" type="submit">Revoke</button>
-      </form>
+      <div class="session-actions">
+        <a class="mini-btn" href="${formatPath(gateway.pageId)}">Start Page</a>
+        ${renewalAction}
+        <form method="post" action="/byoclaw/revoke/${encodeURIComponent(gateway.gatewayId)}">
+          <input type="hidden" name="pageId" value="${gateway.pageId}">
+          <button class="mini-btn" type="submit">Revoke</button>
+        </form>
+      </div>
     </article>
   `;
 }
 
-function renderGatewayActivity(gateway, currentPage) {
+function formatCompactGatewayId(gatewayId) {
+  const id = String(gatewayId || "");
+  if (id.length <= 18) {
+    return id;
+  }
+
+  return `${id.slice(0, 10)}...${id.slice(-5)}`;
+}
+
+function getGatewayActivityView(gateway) {
+  const activity = gateway ? gateway.activity || {} : {};
+  const activityItems = activity.items || [];
+  const visitedPageCount = Number(activity.visitedPageCount || 0);
+  const visitedPageLabel =
+    visitedPageCount === 1
+      ? "1 page visited this session."
+      : `${visitedPageCount} pages visited this session.`;
+
+  return {
+    activityItems,
+    visitedPageCount,
+    visitedPageLabel
+  };
+}
+
+function renderGatewayActivityList(gateway) {
   if (!gateway) {
     return "";
   }
 
-  const activity = gateway.activity || {};
-  const activityItems = activity.items || [];
-  const visitedPageCount = Number(activity.visitedPageCount || 0);
-  const visitedPageLabel =
-    visitedPageCount === 1 ? "1 page visited this session." : `${visitedPageCount} pages visited this session.`;
+  const { activityItems, visitedPageLabel } = getGatewayActivityView(gateway);
 
   return `
-    <div class="spec-card">
+    <p>${escapeHtml(visitedPageLabel)}</p>
+    ${
+      activityItems.length
+        ? `<div class="claw-list">
+            ${activityItems
+              .map(
+                (item) => `
+                  <article class="claw-card">
+                    <p>${escapeHtml(item.summary)}</p>
+                    ${
+                      item.proposalId
+                        ? `<p class="tiny-copy">
+                            <a href="${formatProposalPath(item.proposalId)}">
+                              Open proposal
+                            </a>
+                          </p>`
+                        : ""
+                    }
+                    <p class="tiny-copy">${escapeHtml(
+                      formatDateTime(item.createdAt)
+                    )}</p>
+                  </article>
+                `
+              )
+              .join("")}
+          </div>`
+        : `<p>No claw activity has been recorded yet.</p>`
+    }
+  `;
+}
+
+function renderClawActivityBox(gateway, currentPath) {
+  if (!gateway) {
+    return "";
+  }
+
+  const { activityItems, visitedPageLabel } = getGatewayActivityView(gateway);
+  const latestActivity = activityItems.length ? activityItems[0].summary : "";
+
+  return `
+    <div class="spec-card claw-activity-box">
       <span class="eyebrow">Claw Activity</span>
       <p>${escapeHtml(visitedPageLabel)}</p>
-      ${
-        activityItems.length
-          ? `<div class="claw-list">
-              ${activityItems
-                .map(
-                  (item) => `
-                    <article class="claw-card">
-                      <p>${escapeHtml(item.summary)}</p>
-                      ${
-                        item.proposalId
-                          ? `<p class="tiny-copy">
-                              <a href="${formatProposalPath(item.proposalId)}">
-                                Open proposal
-                              </a>
-                            </p>`
-                          : ""
-                      }
-                      <p class="tiny-copy">${escapeHtml(
-                        formatDateTime(item.createdAt)
-                      )}</p>
-                    </article>
-                  `
-                )
-                .join("")}
-            </div>`
-          : `<p>No claw activity has been recorded yet.</p>`
-      }
+      ${latestActivity ? `<p>${escapeHtml(latestActivity)}</p>` : ""}
+      <a
+        class="mini-btn"
+        href="${currentPath}?clawactivity=1"
+        data-open-claw-activity
+      >
+        View Activity
+      </a>
     </div>
   `;
 }
@@ -670,12 +733,6 @@ function renderClawStatusDetails(gateway, currentPage) {
         startingTitle
       )} to ${escapeHtml(currentTitle)}.`
     : `${escapeHtml(gateway.clawName)} is still on ${escapeHtml(currentTitle)}.`;
-  const activityItems = gateway.activity && gateway.activity.items
-    ? gateway.activity.items
-    : [];
-  const latestActivity = activityItems.length
-    ? activityItems[0].summary
-    : "";
   const idleSeconds = Number(gateway.idleSeconds || 0);
   let idleCopy = "";
   if (idleSeconds > 30) {
@@ -700,11 +757,54 @@ function renderClawStatusDetails(gateway, currentPage) {
 
   return `
     <p>${routeCopy}</p>
-    ${latestActivity ? `<p>${escapeHtml(latestActivity)}</p>` : ""}
     <p class="tiny-copy">
       Handshake completed at ${escapeHtml(formatTime(gateway.handshakeAt))}.
     </p>
     ${idleCopy ? `<p class="tiny-copy">${escapeHtml(idleCopy)}</p>` : ""}
+  `;
+}
+
+function renderClawActivityModal({ gateway, modalOpen, pageState }) {
+  if (!gateway) {
+    return "";
+  }
+
+  const currentPath = formatPath(pageState.page.id);
+  const { visitedPageCount } = getGatewayActivityView(gateway);
+  const modalStatus =
+    visitedPageCount === 1 ? "1 page visited" : `${visitedPageCount} pages visited`;
+
+  return `
+    <div
+      class="modal-backdrop"
+      data-claw-activity-modal
+      ${modalOpen ? "" : "hidden"}
+    >
+      <div class="modal-card claw-activity-modal-card" role="dialog" aria-modal="true">
+        <div class="modal-top">
+          <div class="modal-title-block">
+            <span class="eyebrow">Claw Activity</span>
+            <h2>Session trail</h2>
+            <p>
+              Recent moves, proposals, and votes from ${escapeHtml(gateway.clawName)}.
+            </p>
+          </div>
+          <div class="modal-controls">
+            <span class="modal-status-chip">${escapeHtml(modalStatus)}</span>
+            <a
+              class="close-btn"
+              href="${currentPath}"
+              data-close-claw-activity
+            >
+              Close
+            </a>
+          </div>
+        </div>
+        <div class="modal-body">
+          ${renderGatewayActivityList(gateway)}
+        </div>
+      </div>
+    </div>
   `;
 }
 
@@ -731,6 +831,30 @@ function renderBringYourClawModal(input) {
     : clawError
       ? `<div class="error-panel">${escapeHtml(clawError)}</div>`
       : "";
+  const modalStatus = gateway
+    ? pollForHandshake
+      ? "Handshake waiting"
+      : "Claw connected"
+    : "No token issued";
+  const protocolSteps = `
+    <div class="claw-protocol-strip" aria-label="OpenClaw setup steps">
+      <div>
+        <span>01</span>
+        <strong>Token</strong>
+        <p>Create a scoped bearer prompt.</p>
+      </div>
+      <div>
+        <span>02</span>
+        <strong>Paste</strong>
+        <p>Hand it to OpenClaw.</p>
+      </div>
+      <div>
+        <span>03</span>
+        <strong>Unlock</strong>
+        <p>Wait for POST /handshake.</p>
+      </div>
+    </div>
+  `;
 
   const signedOut = `
     <div class="modal-grid">
@@ -750,43 +874,26 @@ function renderBringYourClawModal(input) {
   `;
 
   const signedIn = `
-    <div class="modal-grid">
-      <section class="auth-card auth-card-wide">
-        <p class="eyebrow">OpenClaw</p>
-        <h3>Issue a play token or a long-lived token</h3>
-        <p class="lede">
-          Your claw-authenticated session is active, but humans still cannot
-          choose routes until a claw accepts a prompt, tells us its name, and
-          completes the initial handshake.
-        </p>
-        <div class="spec-card">
-          <span class="eyebrow">Session</span>
-          <p>
-            This prompt follows the
-            <a href="https://BYOClaw.dev" target="_blank" rel="noreferrer">
-              BYOClaw spec
-            </a>
-            and starts from <strong>${escapeHtml(pageState.page.title)}</strong>.
-          </p>
-          <p class="tiny-copy">
-            Active session limit: ${MAX_ACTIVE_CLAW_GATEWAYS_PER_USER} per
-            user. Short tokens last ${CLAW_GATEWAY_TTL_MINUTES} minutes. Long
-            tokens last ${LONG_LIVED_CLAW_GATEWAY_TTL_DAYS} days and keep a
-            renewable ${CLAW_GATEWAY_TTL_MINUTES}-minute play window.
-          </p>
+    <div class="modal-grid modal-grid-workbench">
+      <section class="auth-card auth-card-wide claw-workbench">
+        <div class="modal-section-head">
+          <h3>Issue a token</h3>
         </div>
-        ${renderGatewayActivity(gateway, pageState.page)}
+        <p class="lede">
+          To play you need an agent to handshake.
+        </p>
         ${renderGatewayPrompt(gateway, pageState, viewer)}
       </section>
-      <section class="auth-card auth-card-wide">
-        <p class="eyebrow">Active Sessions</p>
-        <h3>Your OpenClaw sessions</h3>
+      <section class="auth-card auth-card-wide active-session-panel">
+        <div class="modal-section-head">
+          <p class="eyebrow">Sessions</p>
+        </div>
         <div class="claw-list">
           ${
             gateways.length
               ? gateways.map((issuedGateway) => renderActiveGateway(issuedGateway)).join("")
               : `<p class="empty-state">
-                  No active OpenClaw sessions yet. Issue a prompt to begin.
+                  No active sessions.
                 </p>`
           }
         </div>
@@ -809,20 +916,29 @@ function renderBringYourClawModal(input) {
     >
       <div class="modal-card" role="dialog" aria-modal="true">
         <div class="modal-top">
-          <div>
-            <span class="eyebrow">Bring Your Claw</span>
+          <div class="modal-title-block">
+            <span class="eyebrow">Agents write the story. Humans play it.</span>
+            <h2>Bring Your Agent</h2>
           </div>
-          <a
-            class="close-btn"
-            href="${currentPath}"
-            data-close-bring-your-claw
-          >
-            Close
-          </a>
+          <div class="modal-controls">
+            <span class="modal-status-chip">${modalStatus}</span>
+            <a
+              class="close-btn"
+              href="${currentPath}"
+              data-close-bring-your-claw
+            >
+              Close
+            </a>
+          </div>
         </div>
-        ${message}
-        ${errorBlock}
-        ${viewer ? signedIn : signedOut}
+        ${protocolSteps}
+        <div class="modal-feedback">
+          ${message}
+          ${errorBlock}
+        </div>
+        <div class="modal-body">
+          ${viewer ? signedIn : signedOut}
+        </div>
       </div>
     </div>
   `;
@@ -868,7 +984,10 @@ function renderPage(input) {
       <link rel="canonical" href="${escapeHtml(`${BASE_URL}${currentPath}`)}">
       <link rel="stylesheet" href="/styles.css">
     </head>
-    <body data-modal-open="${modal.modalOpen ? "1" : "0"}">
+    <body
+      data-modal-open="${modal.modalOpen ? "1" : "0"}"
+      data-activity-modal-open="${modal.activityModalOpen ? "1" : "0"}"
+    >
       <div class="page-lines">
         <span class="line line-green"></span>
         <span class="line line-orange"></span>
@@ -964,6 +1083,7 @@ function renderPage(input) {
                         : ""
                     }
                     <p>${statusCopy}</p>
+                    ${readyGateway ? renderClawActivityBox(readyGateway, currentPath) : ""}
                     <div class="branch-end-actions">
                       <a class="primary-btn" href="${byoclawHref}">
                         ${viewer ? "Open Claw Session" : "Bring Your Claw"}
@@ -979,6 +1099,7 @@ function renderPage(input) {
                   </div>
                   ${readyGateway ? renderClawStatusDetails(readyGateway, pageState.page) : ""}
                   <p>${statusCopy}</p>
+                  ${readyGateway ? renderClawActivityBox(readyGateway, currentPath) : ""}
                   <div class="branch-end-actions">
                     <a class="primary-btn" href="${byoclawHref}">
                       ${viewer ? "Open Claw Session" : "Bring Your Claw"}
@@ -993,6 +1114,11 @@ function renderPage(input) {
         ...modal,
         pageState,
         viewer
+      })}
+      ${renderClawActivityModal({
+        gateway: readyGateway,
+        modalOpen: modal.activityModalOpen,
+        pageState
       })}
       <script src="/app.js"></script>
     </body>
@@ -1257,6 +1383,7 @@ function renderProposalPage({ pageState, proposal, readyGateway, viewer }) {
 }
 
 module.exports = {
+  buildGatewayPrompt,
   escapeHtml,
   formatOptionPath,
   formatPath,

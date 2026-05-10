@@ -4,11 +4,13 @@ const {
   buildSessionRecord,
   clearPendingGatewayCookie,
   clearSessionCookie,
+  GATEWAY_PROMPT_COOKIE_NAME,
   HUMAN_PLAYER_COOKIE_NAME,
   PENDING_GATEWAY_COOKIE_NAME,
   hashToken,
   parseCookies,
   randomBase64UrlToken,
+  setGatewayPromptCookie,
   setHumanPlayerCookie,
   setPendingGatewayCookie,
   setSessionCookie
@@ -49,6 +51,7 @@ const {
   LONG_LIVED_CLAW_GATEWAY_TTL_DAYS
 } = require("./env");
 const {
+  buildGatewayPrompt,
   formatPath,
   renderLandingPage,
   renderPage,
@@ -371,6 +374,7 @@ function renderStoryResponse(req, res, pageId, input = {}) {
     false
   );
   const modalOpen = input.modalOpen || req.query.byoclaw === "1";
+  const activityModalOpen = req.query.clawactivity === "1";
   const shouldIssueGateway =
     modalOpen &&
     !input.gateway &&
@@ -409,12 +413,17 @@ function renderStoryResponse(req, res, pageId, input = {}) {
     setPendingGatewayCookie(res, gateway.gatewayId, gateway.ttlMinutes * 60);
   }
 
+  if (gateway && gateway.token) {
+    setGatewayPromptCookie(res, gateway.gatewayId, gateway.token);
+  }
+
   const html = renderPage({
     modal: {
       authError: input.authError || "",
       clawError: input.clawError || "",
       gateway,
       gateways,
+      activityModalOpen,
       modalOpen,
       notice: input.modalNotice || ""
     },
@@ -767,6 +776,55 @@ function createApp() {
           ? "Issued a 20-minute OpenClaw play prompt for this page."
           : "Issued a 7-day OpenClaw token with a 20-minute play window.",
       modalOpen: true
+    });
+  });
+
+  app.get("/byoclaw/prompt/:gatewayId", (req, res) => {
+    const rawPromptCookie = req.cookies[GATEWAY_PROMPT_COOKIE_NAME] || "";
+    const separatorIndex = rawPromptCookie.indexOf(":");
+
+    if (separatorIndex === -1) {
+      res.status(404).json({
+        error: "PROMPT_NOT_AVAILABLE",
+        message: "Issue a fresh prompt to copy it."
+      });
+      return;
+    }
+
+    const cookieGatewayId = rawPromptCookie.slice(0, separatorIndex);
+    const token = rawPromptCookie.slice(separatorIndex + 1);
+
+    if (cookieGatewayId !== req.params.gatewayId || !token) {
+      res.status(404).json({
+        error: "PROMPT_NOT_AVAILABLE",
+        message: "Issue a fresh prompt to copy it."
+      });
+      return;
+    }
+
+    const gateway = findGatewayByTokenHash(hashToken(token));
+
+    if (
+      !gateway ||
+      gateway.gatewayId !== req.params.gatewayId ||
+      gateway.revokedAt ||
+      new Date(gateway.expiresAt).getTime() <= Date.now()
+    ) {
+      res.status(404).json({
+        error: "PROMPT_NOT_AVAILABLE",
+        message: "Issue a fresh prompt to copy it."
+      });
+      return;
+    }
+
+    const viewerGatewayIdsForPage = req.viewer
+      ? listIdentityGatewayIdsForUser(req.viewer.id)
+      : [];
+    const pageState = getPageState(gateway.pageId, viewerGatewayIdsForPage, false);
+
+    res.setHeader("Cache-Control", "no-store");
+    res.json({
+      prompt: buildGatewayPrompt({ ...gateway, token }, pageState, req.viewer)
     });
   });
 

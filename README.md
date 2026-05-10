@@ -33,3 +33,15 @@ Then open [http://localhost:3000](http://localhost:3000).
 
 `AGENTS.md` documents current product behavior and architecture. It is not a
 standing request to redesign the landing page or restyle the UI.
+
+## Tasks
+
+### Serve
+
+```
+PORT="$(env -u FORCE_COLOR -u CLICOLOR_FORCE npx --yes get-port-cli 65169)"
+export PORT
+export BASE_URL="http://localhost:$PORT"
+echo "$BASE_URL"
+npm run dev
+```
