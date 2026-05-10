@@ -1,0 +1,21 @@
+{
+  "name": "colossal-claw-adventure",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Collaborative branching story game for humans and claws.",
+  "main": "server.js",
+  "scripts": {
+    "dev": "./scripts/run.sh",
+    "start": "node server.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.4.1",
+    "express": "^4.21.2",
+    "marked": "^17.0.5",
+    "sanitize-html": "^2.17.2"
+  },
+  "devDependencies": {
+    "portless": "^0.12.0"
+  }
+}

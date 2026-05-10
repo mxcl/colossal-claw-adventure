@@ -1,0 +1,10 @@
+version = 1
+name = "colossal-claw-adventure"
+
+[setup]
+script = "npm install"
+
+[[actions]]
+name = "npm run dev"
+icon = "run"
+command = "npm run dev"

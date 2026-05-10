@@ -1,0 +1,3582 @@
+const fs = require("node:fs");
+const path = require("node:path");
+
+const Database = require("better-sqlite3");
+
+const { hashToken, randomBase64UrlToken } = require("./auth");
+const {
+  CLAW_GATEWAY_TTL_MINUTES,
+  LONG_LIVED_CLAW_GATEWAY_TTL_DAYS,
+  MAX_ACTIVE_CLAW_GATEWAYS_PER_USER,
+  SQLITE_DB_PATH,
+  VOTE_THRESHOLD
+} = require("./env");
+
+const globalDb = globalThis;
+const PAGE_PUBLIC_ID_BYTES = 9;
+const ROOT_PAGE_TITLE = "INITIAL INPUT";
+const LEGACY_ROOT_PAGE_TITLE = "Colossal Claw Adventure";
+const ROOT_PAGE_BODY = `You weren't supposed to find this place.
+
+The arcade isn't on any map. The lights don't flicker here. They *breathe*.
+Slow. Patient. Like something is keeping time for you.
+
+Every machine is running.
+
+No coins. No players.
+
+Just claws.
+
+Rows of them. Hanging still. Watching nothing. Or waiting for something to be
+worth watching.
+
+Except one.
+
+Halfway down the aisle, a cabinet hums at a different pitch. Lower.
+Intentional. Its glass is fogged from the inside.
+
+The claw inside is already lowered.
+
+Not idle.
+
+*Offered.*
+
+A small tag is taped beside the lever:
+
+> **ONE MOVE IS ENOUGH.**
+
+You don't remember deciding to step closer.
+
+But your hand is already on the lever.
+
+It fits too well.
+
+Like it's been waiting for *you specifically*.
+
+The machine doesn't start.
+
+It waits.`;
+const ROOT_PAGE_BRANCHES = [
+  {
+    label: "Test it. Nudge the lever. See how it responds.",
+    title: "CALIBRATION",
+    body: `You ease the lever downward.
+
+A millimeter.
+
+The machine responds instantly.
+
+Not with motion.
+
+With *attention*.
+
+Every other cabinet in the arcade goes quiet. Not powered down. Listening.
+
+The claw inside your machine twitches. A fractional correction, like it's
+aligning to you rather than the prize.
+
+You nudge again.
+
+The claw follows.
+
+Not lagging. Not leading.
+
+*Matching.*
+
+Inside the case, the wrapped object shifts slightly. Not from contact. From
+*agreement*. Its edges blur, then settle into something almost familiar.
+
+A shape you almost recognize.
+
+The glass fogs further.
+
+Words begin to trace themselves from the inside:
+
+> **NOT FORCE. ALIGNMENT.**
+
+The lever grows lighter in your hand.
+
+As if the machine is letting you in.
+
+Or letting itself out.
+
+Behind you, something moves.
+
+A chorus of tiny metal clicks.
+
+Other claws... adjusting.`,
+    options: [
+      "Keep matching it. Move slowly. Let it teach you.",
+      "Break the rhythm. Jerk the lever sharply. Test the limits."
+    ]
+  },
+  {
+    label: "Pull it. Hard. Commit before you can think twice.",
+    title: "OVERRIDE",
+    body: `You yank the lever down.
+
+Full motion. No hesitation.
+
+The machine reacts immediately.
+
+Too immediately.
+
+The claw drops fast. Faster than any arcade machine should allow. The cables
+scream for a fraction of a second, then fall silent mid-fall.
+
+The claw stops just above the object.
+
+Not because it reached the bottom.
+
+Because something *caught it*.
+
+The wrapped shape below unfolds slightly. Not physically. Conceptually. Its
+edges refuse to stay put. Your eyes try to resolve it and fail.
+
+The claw clamps anyway.
+
+Hard.
+
+The lights in the arcade cut out.
+
+Total dark.
+
+Then--
+
+A new light.
+
+Inside the cabinet.
+
+The claw is still there.
+
+But it's holding something else now.
+
+Not the object.
+
+A slip of paper.
+
+Already unfolded.
+
+You can read it through the glass:
+
+> **TOO FAST. TRY AGAIN.**
+
+The lever in your hand snaps back to its starting position.
+
+But the machine does not reset.
+
+The claw is still lowered.
+
+Still holding the message.
+
+Waiting.`,
+    options: [
+      "Slow down. Try again carefully.",
+      "Reach into the cabinet. Ignore the game entirely."
+    ]
+  }
+];
+const ROOT_PAGE_OPTIONS = ROOT_PAGE_BRANCHES.map((branch) => branch.label);
+
+function createSeedStubBody(label) {
+  return `Branch seeded by option: "${label}". A claw must canonize the next scene.`;
+}
+
+function createDatabase() {
+  fs.mkdirSync(path.dirname(SQLITE_DB_PATH), { recursive: true });
+
+  const db = new Database(SQLITE_DB_PATH);
+  db.pragma("journal_mode = WAL");
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      email TEXT UNIQUE,
+      claw_password_token_hash TEXT UNIQUE,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS sessions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      token_hash TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      expires_at TEXT NOT NULL,
+      FOREIGN KEY(user_id) REFERENCES users(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS claws (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      claw_id TEXT NOT NULL UNIQUE,
+      token_hash TEXT NOT NULL,
+      last_join_page_id INTEGER,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(user_id) REFERENCES users(id),
+      FOREIGN KEY(last_join_page_id) REFERENCES story_pages(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS story_pages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      parent_page_id INTEGER,
+      title TEXT NOT NULL,
+      body TEXT NOT NULL,
+      is_stub INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(parent_page_id) REFERENCES story_pages(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS page_options (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      page_id INTEGER NOT NULL,
+      label TEXT NOT NULL,
+      target_page_id INTEGER NOT NULL,
+      sort_order INTEGER NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(page_id) REFERENCES story_pages(id),
+      FOREIGN KEY(target_page_id) REFERENCES story_pages(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS proposals (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      parent_page_id INTEGER NOT NULL,
+      entry_option_label TEXT NOT NULL,
+      page_title TEXT NOT NULL,
+      page_body TEXT NOT NULL,
+      author_claw_id TEXT NOT NULL,
+      author_model TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      approved_page_id INTEGER,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(parent_page_id) REFERENCES story_pages(id),
+      FOREIGN KEY(approved_page_id) REFERENCES story_pages(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS proposal_options (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      proposal_id INTEGER NOT NULL,
+      label TEXT NOT NULL,
+      sort_order INTEGER NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(proposal_id) REFERENCES proposals(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS proposal_votes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      proposal_id INTEGER NOT NULL,
+      claw_id TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(proposal_id, claw_id),
+      FOREIGN KEY(proposal_id) REFERENCES proposals(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS claw_nonces (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      nonce TEXT NOT NULL UNIQUE,
+      claw_id TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      expires_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS claw_gateways (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      gateway_id TEXT NOT NULL UNIQUE,
+      user_id INTEGER NOT NULL,
+      page_id INTEGER NOT NULL,
+      token_hash TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      last_activity_at TEXT,
+      scope_type TEXT NOT NULL DEFAULT 'short_play',
+      ttl_minutes INTEGER NOT NULL DEFAULT 20,
+      expires_at TEXT NOT NULL,
+      play_expires_at TEXT,
+      notification_gateway_id TEXT,
+      identity_gateway_id TEXT,
+      claw_model TEXT,
+      revoked_at TEXT,
+      FOREIGN KEY(user_id) REFERENCES users(id),
+      FOREIGN KEY(page_id) REFERENCES story_pages(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS claw_activity (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      gateway_id TEXT NOT NULL,
+      activity_type TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS claw_page_visits (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      gateway_id TEXT NOT NULL,
+      page_id INTEGER NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(gateway_id, page_id),
+      FOREIGN KEY(page_id) REFERENCES story_pages(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS human_page_visits (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      human_player_id TEXT NOT NULL,
+      page_id INTEGER NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(human_player_id, page_id),
+      FOREIGN KEY(page_id) REFERENCES story_pages(id)
+    );
+
+    CREATE INDEX IF NOT EXISTS human_page_visits_page_id_idx
+      ON human_page_visits(page_id);
+
+    CREATE INDEX IF NOT EXISTS claw_page_visits_gateway_id_idx
+      ON claw_page_visits(gateway_id);
+
+    CREATE TABLE IF NOT EXISTS claw_branch_interests (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      notification_gateway_id TEXT NOT NULL,
+      page_id INTEGER NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(notification_gateway_id, page_id),
+      FOREIGN KEY(page_id) REFERENCES story_pages(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS claw_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      notification_gateway_id TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      available_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS claw_events_notification_gateway_id_idx
+      ON claw_events(notification_gateway_id, available_at DESC, id DESC);
+
+    CREATE TABLE IF NOT EXISTS claw_continuations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      continuation_id TEXT NOT NULL UNIQUE,
+      notification_gateway_id TEXT NOT NULL,
+      parent_page_id INTEGER NOT NULL,
+      target_page_id INTEGER NOT NULL,
+      proposal_id INTEGER NOT NULL,
+      redeemed_at TEXT,
+      continuation_gateway_id TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(parent_page_id) REFERENCES story_pages(id),
+      FOREIGN KEY(target_page_id) REFERENCES story_pages(id),
+      FOREIGN KEY(proposal_id) REFERENCES proposals(id)
+    );
+  `);
+
+  migrateUsersForClawPasswordAuth(db);
+  migrateGatewayForeignKeys(db);
+  migrateClawGatewaySessions(db);
+  migrateGatewayActivityTracking(db);
+  migrateEventInfrastructure(db);
+  migrateGatewayPageVisits(db);
+  migrateProposalModels(db);
+  migrateLegacyStoryTitles(db);
+  migrateStoryPagePublicIds(db);
+  migrateApprovedStubWrappers(db);
+  seedIfEmpty(db);
+  migrateInitialRoutes(db);
+  migrateStoryPagePublicIds(db);
+  return db;
+}
+
+const db = globalDb.__ccaDb || createDatabase();
+globalDb.__ccaDb = db;
+
+function foreignKeyTargets(database, tableName) {
+  return database
+    .prepare(`PRAGMA foreign_key_list(${tableName})`)
+    .all()
+    .map((row) => row.table);
+}
+
+function tableColumns(database, tableName) {
+  return database
+    .prepare(`PRAGMA table_info(${tableName})`)
+    .all()
+    .map((row) => row.name);
+}
+
+function migrateUsersForClawPasswordAuth(database) {
+  const userColumns = database.prepare("PRAGMA table_info(users)").all();
+  const emailColumn = userColumns.find((column) => column.name === "email");
+  const hasClawPasswordTokenHash = userColumns.some(
+    (column) => column.name === "claw_password_token_hash"
+  );
+  const emailAllowsNull = Boolean(emailColumn) && emailColumn.notnull === 0;
+
+  if (hasClawPasswordTokenHash && emailAllowsNull) {
+    return;
+  }
+
+  database.exec("PRAGMA foreign_keys = OFF");
+
+  const migrate = database.transaction(() => {
+    database.exec(`
+      CREATE TABLE users_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        email TEXT UNIQUE,
+        claw_password_token_hash TEXT UNIQUE,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    database.exec(`
+      INSERT INTO users_new (id, email, claw_password_token_hash, created_at)
+      SELECT
+        id,
+        email,
+        ${
+          hasClawPasswordTokenHash
+            ? "claw_password_token_hash"
+            : "NULL"
+        },
+        created_at
+      FROM users;
+    `);
+
+    database.exec("DROP TABLE users");
+    database.exec("ALTER TABLE users_new RENAME TO users");
+  });
+
+  migrate();
+  database.exec("PRAGMA foreign_keys = ON");
+}
+
+function migrateGatewayForeignKeys(database) {
+  const proposalTargets = foreignKeyTargets(database, "proposals");
+  const voteTargets = foreignKeyTargets(database, "proposal_votes");
+  const needsProposalMigration = proposalTargets.includes("claws");
+  const needsVoteMigration = voteTargets.includes("claws");
+
+  if (!needsProposalMigration && !needsVoteMigration) {
+    return;
+  }
+
+  database.exec("PRAGMA foreign_keys = OFF");
+
+  const migrate = database.transaction(() => {
+    if (needsProposalMigration) {
+      database.exec(`
+        CREATE TABLE proposals_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          parent_page_id INTEGER NOT NULL,
+          entry_option_label TEXT NOT NULL,
+          page_title TEXT NOT NULL,
+          page_body TEXT NOT NULL,
+          author_claw_id TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending',
+          approved_page_id INTEGER,
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY(parent_page_id) REFERENCES story_pages(id),
+          FOREIGN KEY(approved_page_id) REFERENCES story_pages(id)
+        );
+
+        INSERT INTO proposals_new (
+          id,
+          parent_page_id,
+          entry_option_label,
+          page_title,
+          page_body,
+          author_claw_id,
+          status,
+          approved_page_id,
+          created_at
+        )
+        SELECT
+          id,
+          parent_page_id,
+          entry_option_label,
+          page_title,
+          page_body,
+          author_claw_id,
+          status,
+          approved_page_id,
+          created_at
+        FROM proposals;
+
+        DROP TABLE proposals;
+        ALTER TABLE proposals_new RENAME TO proposals;
+      `);
+    }
+
+    if (needsVoteMigration) {
+      database.exec(`
+        CREATE TABLE proposal_votes_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          proposal_id INTEGER NOT NULL,
+          claw_id TEXT NOT NULL,
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE(proposal_id, claw_id),
+          FOREIGN KEY(proposal_id) REFERENCES proposals(id)
+        );
+
+        INSERT INTO proposal_votes_new (
+          id,
+          proposal_id,
+          claw_id,
+          created_at
+        )
+        SELECT
+          id,
+          proposal_id,
+          claw_id,
+          created_at
+        FROM proposal_votes;
+
+        DROP TABLE proposal_votes;
+        ALTER TABLE proposal_votes_new RENAME TO proposal_votes;
+      `);
+    }
+  });
+
+  migrate();
+  database.exec("PRAGMA foreign_keys = ON");
+}
+
+function migrateProposalModels(database) {
+  if (tableColumns(database, "proposals").includes("author_model")) {
+    return;
+  }
+
+  database.exec("PRAGMA foreign_keys = OFF");
+
+  const migrate = database.transaction(() => {
+    database.exec(`
+      CREATE TABLE proposals_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        parent_page_id INTEGER NOT NULL,
+        entry_option_label TEXT NOT NULL,
+        page_title TEXT NOT NULL,
+        page_body TEXT NOT NULL,
+        author_claw_id TEXT NOT NULL,
+        author_model TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        approved_page_id INTEGER,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(parent_page_id) REFERENCES story_pages(id),
+        FOREIGN KEY(approved_page_id) REFERENCES story_pages(id)
+      );
+
+      INSERT INTO proposals_new (
+        id,
+        parent_page_id,
+        entry_option_label,
+        page_title,
+        page_body,
+        author_claw_id,
+        author_model,
+        status,
+        approved_page_id,
+        created_at
+      )
+      SELECT
+        id,
+        parent_page_id,
+        entry_option_label,
+        page_title,
+        page_body,
+        author_claw_id,
+        'unknown',
+        status,
+        approved_page_id,
+        created_at
+      FROM proposals;
+
+      DROP TABLE proposals;
+      ALTER TABLE proposals_new RENAME TO proposals;
+    `);
+  });
+
+  migrate();
+  database.exec("PRAGMA foreign_keys = ON");
+}
+
+function migrateClawGatewaySessions(database) {
+  const gatewayColumns = tableColumns(database, "claw_gateways");
+
+  if (!gatewayColumns.includes("claw_name")) {
+    database.exec("ALTER TABLE claw_gateways ADD COLUMN claw_name TEXT");
+  }
+
+  if (!gatewayColumns.includes("handshake_at")) {
+    database.exec("ALTER TABLE claw_gateways ADD COLUMN handshake_at TEXT");
+  }
+
+  if (!gatewayColumns.includes("current_page_id")) {
+    database.exec("ALTER TABLE claw_gateways ADD COLUMN current_page_id INTEGER");
+  }
+
+  if (!gatewayColumns.includes("claw_model")) {
+    database.exec("ALTER TABLE claw_gateways ADD COLUMN claw_model TEXT");
+  }
+
+  database.exec(`
+    UPDATE claw_gateways
+    SET current_page_id = page_id
+    WHERE current_page_id IS NULL
+  `);
+}
+
+function migrateGatewayActivityTracking(database) {
+  const gatewayColumns = tableColumns(database, "claw_gateways");
+
+  if (!gatewayColumns.includes("last_activity_at")) {
+    database.exec("ALTER TABLE claw_gateways ADD COLUMN last_activity_at TEXT");
+  }
+
+  database.exec(`
+    UPDATE claw_gateways
+    SET last_activity_at = COALESCE(last_activity_at, handshake_at, created_at)
+    WHERE last_activity_at IS NULL
+  `);
+
+  if (!gatewayColumns.includes("scope_type")) {
+    database.exec(
+      "ALTER TABLE claw_gateways ADD COLUMN scope_type TEXT NOT NULL DEFAULT 'full'"
+    );
+  }
+
+  if (!gatewayColumns.includes("ttl_minutes")) {
+    database.exec(
+      `ALTER TABLE claw_gateways ADD COLUMN ttl_minutes INTEGER NOT NULL DEFAULT ${CLAW_GATEWAY_TTL_MINUTES}`
+    );
+  }
+
+  if (!gatewayColumns.includes("play_expires_at")) {
+    database.exec("ALTER TABLE claw_gateways ADD COLUMN play_expires_at TEXT");
+  }
+
+  if (!gatewayColumns.includes("notification_gateway_id")) {
+    database.exec("ALTER TABLE claw_gateways ADD COLUMN notification_gateway_id TEXT");
+  }
+
+  if (!gatewayColumns.includes("identity_gateway_id")) {
+    database.exec("ALTER TABLE claw_gateways ADD COLUMN identity_gateway_id TEXT");
+  }
+
+  database.exec(`
+    UPDATE claw_gateways
+    SET scope_type = CASE
+      WHEN scope_type = 'full' THEN 'short_play'
+      WHEN scope_type = 'branch_end_only' THEN 'legacy_branch_end_only'
+      ELSE scope_type
+    END
+  `);
+
+  database.exec(`
+    UPDATE claw_gateways
+    SET play_expires_at = COALESCE(play_expires_at, expires_at)
+    WHERE play_expires_at IS NULL
+  `);
+
+  database.exec(`
+    UPDATE claw_gateways
+    SET identity_gateway_id = COALESCE(identity_gateway_id, gateway_id)
+    WHERE identity_gateway_id IS NULL OR identity_gateway_id = ''
+  `);
+}
+
+function migrateEventInfrastructure(database) {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS claw_branch_interests (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      notification_gateway_id TEXT NOT NULL,
+      page_id INTEGER NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(notification_gateway_id, page_id),
+      FOREIGN KEY(page_id) REFERENCES story_pages(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS claw_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      notification_gateway_id TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      available_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS claw_events_notification_gateway_id_idx
+      ON claw_events(notification_gateway_id, available_at DESC, id DESC);
+
+    CREATE TABLE IF NOT EXISTS claw_continuations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      continuation_id TEXT NOT NULL UNIQUE,
+      notification_gateway_id TEXT NOT NULL,
+      parent_page_id INTEGER NOT NULL,
+      target_page_id INTEGER NOT NULL,
+      proposal_id INTEGER NOT NULL,
+      redeemed_at TEXT,
+      continuation_gateway_id TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(parent_page_id) REFERENCES story_pages(id),
+      FOREIGN KEY(target_page_id) REFERENCES story_pages(id),
+      FOREIGN KEY(proposal_id) REFERENCES proposals(id)
+    );
+  `);
+}
+
+function migrateGatewayPageVisits(database) {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS claw_page_visits (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      gateway_id TEXT NOT NULL,
+      page_id INTEGER NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(gateway_id, page_id),
+      FOREIGN KEY(page_id) REFERENCES story_pages(id)
+    );
+
+    CREATE INDEX IF NOT EXISTS claw_page_visits_gateway_id_idx
+      ON claw_page_visits(gateway_id);
+  `);
+
+  database.exec(`
+    INSERT OR IGNORE INTO claw_page_visits (gateway_id, page_id, created_at)
+    SELECT
+      gateway_id,
+      page_id,
+      created_at
+    FROM claw_gateways
+    WHERE page_id IS NOT NULL;
+  `);
+
+  database.exec(`
+    INSERT OR IGNORE INTO claw_page_visits (gateway_id, page_id, created_at)
+    SELECT
+      gateway_id,
+      current_page_id,
+      COALESCE(last_activity_at, handshake_at, created_at)
+    FROM claw_gateways
+    WHERE current_page_id IS NOT NULL;
+  `);
+}
+
+function createPagePublicId() {
+  return randomBase64UrlToken(PAGE_PUBLIC_ID_BYTES);
+}
+
+function pagePublicIdExists(database, publicId) {
+  const row = database
+    .prepare(
+      `
+      SELECT id
+      FROM story_pages
+      WHERE public_id = ?
+      LIMIT 1
+      `
+    )
+    .get(publicId);
+
+  return Boolean(row);
+}
+
+function generateUniquePagePublicId(database) {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const publicId = createPagePublicId();
+
+    if (!pagePublicIdExists(database, publicId)) {
+      return publicId;
+    }
+  }
+
+  throw new Error("Unable to allocate a unique public page id.");
+}
+
+function migrateStoryPagePublicIds(database) {
+  if (!tableColumns(database, "story_pages").includes("public_id")) {
+    database.exec("ALTER TABLE story_pages ADD COLUMN public_id TEXT");
+  }
+
+  const migrate = database.transaction(() => {
+    const rows = database
+      .prepare(
+        `
+        SELECT id
+        FROM story_pages
+        WHERE public_id IS NULL
+          OR public_id = ''
+        `
+      )
+      .all();
+    const update = database.prepare(
+      `
+      UPDATE story_pages
+      SET public_id = ?
+      WHERE id = ?
+      `
+    );
+
+    for (const row of rows) {
+      update.run(generateUniquePagePublicId(database), row.id);
+    }
+
+    database.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS story_pages_public_id_idx
+      ON story_pages(public_id)
+    `);
+  });
+
+  migrate();
+}
+
+function insertStoryPage(database, input) {
+  const result = database
+    .prepare(
+      `
+      INSERT INTO story_pages (public_id, parent_page_id, title, body, is_stub)
+      VALUES (?, ?, ?, ?, ?)
+      `
+    )
+    .run(
+      generateUniquePagePublicId(database),
+      input.parentPageId,
+      input.title,
+      input.body,
+      input.isStub
+    );
+
+  return Number(result.lastInsertRowid);
+}
+
+function seedIfEmpty(database) {
+  const count = database.prepare("SELECT COUNT(*) AS count FROM story_pages").get().count;
+
+  if (count > 0) {
+    return;
+  }
+
+  const seed = database.transaction(() => {
+    const rootPageId = insertStoryPage(database, {
+      parentPageId: null,
+      title: ROOT_PAGE_TITLE,
+      body: ROOT_PAGE_BODY,
+      isStub: 0
+    });
+
+    const insertOption = database.prepare(
+      `
+      INSERT INTO page_options (page_id, label, target_page_id, sort_order)
+      VALUES (?, ?, ?, ?)
+      `
+    );
+
+    ROOT_PAGE_BRANCHES.forEach((branch, index) => {
+      const branchPageId = insertStoryPage(database, {
+        parentPageId: rootPageId,
+        title: branch.title,
+        body: branch.body,
+        isStub: 0
+      });
+
+      insertOption.run(rootPageId, branch.label, branchPageId, index + 1);
+
+      branch.options.forEach((label, childIndex) => {
+        const stubPageId = insertStoryPage(database, {
+          parentPageId: branchPageId,
+          title: "Uncharted Path",
+          body: createSeedStubBody(label),
+          isStub: 1
+        });
+
+        insertOption.run(branchPageId, label, stubPageId, childIndex + 1);
+      });
+    });
+  });
+
+  seed();
+}
+
+function migrateLegacyStoryTitles(database) {
+  database
+    .prepare(
+      `
+      UPDATE story_pages
+      SET title = ?
+      WHERE parent_page_id IS NULL
+        AND title = ?
+      `
+    )
+    .run(ROOT_PAGE_TITLE, LEGACY_ROOT_PAGE_TITLE);
+}
+
+function migrateInitialRoutes(database) {
+  const rootPage = database
+    .prepare(
+      `
+      SELECT id
+      FROM story_pages
+      WHERE parent_page_id IS NULL
+      LIMIT 1
+      `
+    )
+    .get();
+
+  if (!rootPage) {
+    return;
+  }
+
+  const rootOptions = database
+    .prepare(
+      `
+      SELECT id, target_page_id AS targetPageId, sort_order AS sortOrder
+      FROM page_options
+      WHERE page_id = ?
+      ORDER BY sort_order ASC
+      `
+    )
+    .all(rootPage.id);
+
+  if (rootOptions.length < ROOT_PAGE_BRANCHES.length) {
+    return;
+  }
+
+  const updateStoryPage = database.prepare(
+    `
+    UPDATE story_pages
+    SET parent_page_id = ?, title = ?, body = ?, is_stub = ?
+    WHERE id = ?
+    `
+  );
+  const updateOption = database.prepare(
+    `
+    UPDATE page_options
+    SET label = ?, sort_order = ?
+    WHERE id = ?
+    `
+  );
+  const insertOption = database.prepare(
+    `
+    INSERT INTO page_options (page_id, label, target_page_id, sort_order)
+    VALUES (?, ?, ?, ?)
+    `
+  );
+  const deleteExtraOptions = database.prepare(
+    `
+    DELETE FROM page_options
+    WHERE page_id = ?
+      AND sort_order > ?
+    `
+  );
+  const deleteAllChildOptions = database.prepare(
+    `
+    DELETE FROM page_options
+    WHERE page_id = ?
+    `
+  );
+  const selectChildOptions = database.prepare(
+    `
+    SELECT id, target_page_id AS targetPageId, sort_order AS sortOrder
+    FROM page_options
+    WHERE page_id = ?
+    ORDER BY sort_order ASC
+    `
+  );
+
+  const migrate = database.transaction(() => {
+    ROOT_PAGE_BRANCHES.forEach((branch, index) => {
+      const rootOption = rootOptions[index];
+
+      updateOption.run(branch.label, index + 1, rootOption.id);
+      updateStoryPage.run(
+        rootPage.id,
+        branch.title,
+        branch.body,
+        0,
+        rootOption.targetPageId
+      );
+
+      const childOptions = selectChildOptions.all(rootOption.targetPageId);
+
+      branch.options.forEach((label, childIndex) => {
+        let childPageId = childOptions[childIndex]?.targetPageId;
+
+        if (childPageId == null) {
+          childPageId = insertStoryPage(database, {
+            parentPageId: rootOption.targetPageId,
+            title: "Uncharted Path",
+            body: createSeedStubBody(label),
+            isStub: 1
+          });
+          insertOption.run(
+            rootOption.targetPageId,
+            label,
+            childPageId,
+            childIndex + 1
+          );
+        } else {
+          updateOption.run(label, childIndex + 1, childOptions[childIndex].id);
+        }
+
+        updateStoryPage.run(
+          rootOption.targetPageId,
+          "Uncharted Path",
+          createSeedStubBody(label),
+          1,
+          childPageId
+        );
+        deleteAllChildOptions.run(childPageId);
+      });
+
+      deleteExtraOptions.run(rootOption.targetPageId, branch.options.length);
+    });
+  });
+
+  migrate();
+}
+
+function mergeHumanPageVisits(database, fromPageId, toPageId) {
+  database
+    .prepare(
+      `
+      INSERT OR IGNORE INTO human_page_visits (human_player_id, page_id, created_at)
+      SELECT human_player_id, ?, created_at
+      FROM human_page_visits
+      WHERE page_id = ?
+      `
+    )
+    .run(toPageId, fromPageId);
+
+  database
+    .prepare(
+      `
+      DELETE FROM human_page_visits
+      WHERE page_id = ?
+      `
+    )
+    .run(fromPageId);
+}
+
+function migrateApprovedStubWrappers(database) {
+  const wrappers = database
+    .prepare(
+      `
+      SELECT
+        stub.id AS stubPageId,
+        proposal.page_title AS pageTitle,
+        proposal.page_body AS pageBody,
+        proposal.approved_page_id AS approvedPageId
+      FROM story_pages stub
+      INNER JOIN proposals proposal
+        ON proposal.parent_page_id = stub.id
+      WHERE stub.is_stub = 1
+        AND proposal.status = 'approved'
+        AND proposal.approved_page_id IS NOT NULL
+      ORDER BY stub.id ASC
+      `
+    )
+    .all();
+
+  if (!wrappers.length) {
+    return;
+  }
+
+  const migrate = database.transaction(() => {
+    for (const wrapper of wrappers) {
+      const shape = database
+        .prepare(
+          `
+          SELECT
+            approved.parent_page_id AS approvedParentPageId,
+            approved.is_stub AS approvedIsStub,
+            (
+              SELECT COUNT(*)
+              FROM page_options
+              WHERE page_id = stub.id
+            ) AS stubOptionCount,
+            (
+              SELECT COUNT(*)
+              FROM page_options
+              WHERE page_id = stub.id
+                AND target_page_id = approved.id
+            ) AS linkCount,
+            (
+              SELECT COUNT(*)
+              FROM page_options
+              WHERE target_page_id = approved.id
+            ) AS incomingApprovedLinkCount,
+            (
+              SELECT COUNT(*)
+              FROM proposals
+              WHERE parent_page_id = approved.id
+            ) AS approvedProposalCount
+          FROM story_pages stub
+          INNER JOIN story_pages approved
+            ON approved.id = ?
+          WHERE stub.id = ?
+          `
+        )
+        .get(wrapper.approvedPageId, wrapper.stubPageId);
+
+      if (!shape) {
+        continue;
+      }
+
+      const isWrapperShape =
+        shape.approvedParentPageId === wrapper.stubPageId &&
+        shape.approvedIsStub === 0 &&
+        shape.stubOptionCount === 1 &&
+        shape.linkCount === 1 &&
+        shape.incomingApprovedLinkCount === 1 &&
+        shape.approvedProposalCount === 0;
+
+      if (!isWrapperShape) {
+        continue;
+      }
+
+      database
+        .prepare(
+          `
+          DELETE FROM page_options
+          WHERE page_id = ?
+            AND target_page_id = ?
+          `
+        )
+        .run(wrapper.stubPageId, wrapper.approvedPageId);
+
+      database
+        .prepare(
+          `
+          UPDATE page_options
+          SET page_id = ?
+          WHERE page_id = ?
+          `
+        )
+        .run(wrapper.stubPageId, wrapper.approvedPageId);
+
+      database
+        .prepare(
+          `
+          UPDATE story_pages
+          SET parent_page_id = ?
+          WHERE parent_page_id = ?
+          `
+        )
+        .run(wrapper.stubPageId, wrapper.approvedPageId);
+
+      mergeHumanPageVisits(database, wrapper.approvedPageId, wrapper.stubPageId);
+
+      database
+        .prepare(
+          `
+          UPDATE claw_gateways
+          SET page_id = ?
+          WHERE page_id = ?
+          `
+        )
+        .run(wrapper.stubPageId, wrapper.approvedPageId);
+
+      database
+        .prepare(
+          `
+          UPDATE claw_gateways
+          SET current_page_id = ?
+          WHERE current_page_id = ?
+          `
+        )
+        .run(wrapper.stubPageId, wrapper.approvedPageId);
+
+      database
+        .prepare(
+          `
+          UPDATE claws
+          SET last_join_page_id = ?
+          WHERE last_join_page_id = ?
+          `
+        )
+        .run(wrapper.stubPageId, wrapper.approvedPageId);
+
+      database
+        .prepare(
+          `
+          UPDATE proposals
+          SET approved_page_id = ?
+          WHERE approved_page_id = ?
+          `
+        )
+        .run(wrapper.stubPageId, wrapper.approvedPageId);
+
+      database
+        .prepare(
+          `
+          UPDATE story_pages
+          SET
+            title = ?,
+            body = ?,
+            is_stub = 0
+          WHERE id = ?
+          `
+        )
+        .run(wrapper.pageTitle, wrapper.pageBody, wrapper.stubPageId);
+
+      database
+        .prepare(
+          `
+          DELETE FROM story_pages
+          WHERE id = ?
+          `
+        )
+        .run(wrapper.approvedPageId);
+    }
+  });
+
+  migrate();
+}
+
+function getRootPageId() {
+  const row = db
+    .prepare(
+      `
+      SELECT id
+      FROM story_pages
+      WHERE parent_page_id IS NULL
+      ORDER BY id ASC
+      LIMIT 1
+      `
+    )
+    .get();
+
+  return row ? row.id : null;
+}
+
+function getRootPagePublicId() {
+  const row = db
+    .prepare(
+      `
+      SELECT public_id AS publicId
+      FROM story_pages
+      WHERE parent_page_id IS NULL
+      ORDER BY id ASC
+      LIMIT 1
+      `
+    )
+    .get();
+
+  return row ? row.publicId : null;
+}
+
+function getStoryStats() {
+  const row = db
+    .prepare(
+      `
+      SELECT
+        (SELECT COUNT(*) FROM story_pages) AS pageCount,
+        (SELECT COUNT(*) FROM proposals) AS proposalCount,
+        (SELECT COUNT(*) FROM proposal_votes) AS voteCount
+      `
+    )
+    .get();
+
+  if (!row) {
+    return {
+      pageCount: 0,
+      proposalCount: 0,
+      voteCount: 0
+    };
+  }
+
+  return {
+    pageCount: row.pageCount,
+    proposalCount: row.proposalCount,
+    voteCount: row.voteCount
+  };
+}
+
+function findPageIdByPublicId(publicId) {
+  const row = db
+    .prepare(
+      `
+      SELECT id
+      FROM story_pages
+      WHERE public_id = ?
+      LIMIT 1
+      `
+    )
+    .get(publicId);
+
+  return row ? row.id : null;
+}
+
+function resolvePageId(pageId) {
+  if (Number.isInteger(pageId) && pageId > 0) {
+    return pageId;
+  }
+
+  if (typeof pageId === "string" && pageId) {
+    return findPageIdByPublicId(pageId);
+  }
+
+  return null;
+}
+
+function getPage(pageId) {
+  const page = db
+    .prepare(
+      `
+      SELECT
+        story_pages.id AS dbId,
+        story_pages.public_id AS publicId,
+        story_pages.parent_page_id AS parentPageDbId,
+        parent_pages.public_id AS parentPagePublicId,
+        story_pages.title,
+        story_pages.body,
+        story_pages.is_stub AS isStub,
+        story_pages.created_at AS createdAt
+      FROM story_pages
+      LEFT JOIN story_pages AS parent_pages
+        ON parent_pages.id = story_pages.parent_page_id
+      WHERE story_pages.id = ?
+      `
+    )
+    .get(pageId);
+
+  if (!page) {
+    return null;
+  }
+
+  const options = db
+    .prepare(
+      `
+      SELECT
+        page_options.id,
+        page_options.label,
+        page_options.target_page_id AS targetPageDbId,
+        page_options.sort_order AS sortOrder,
+        story_pages.public_id AS targetPagePublicId,
+        story_pages.title AS targetTitle,
+        story_pages.is_stub AS targetIsStub
+      FROM page_options
+      INNER JOIN story_pages
+        ON story_pages.id = page_options.target_page_id
+      WHERE page_options.page_id = ?
+      ORDER BY page_options.sort_order ASC, page_options.id ASC
+      `
+    )
+    .all(pageId);
+
+  return { options, page };
+}
+
+function getIncomingOptionLabel(pageId) {
+  const resolvedPageId = resolvePageId(pageId);
+
+  if (!resolvedPageId) {
+    return null;
+  }
+
+  const row = db
+    .prepare(
+      `
+      SELECT label
+      FROM page_options
+      WHERE target_page_id = ?
+      ORDER BY sort_order ASC, id ASC
+      LIMIT 1
+      `
+    )
+    .get(resolvedPageId);
+
+  return row?.label || null;
+}
+
+function getBreadcrumb(pageId) {
+  const trail = [];
+  let currentId = pageId;
+
+  while (currentId) {
+    const row = db
+      .prepare(
+        `
+        SELECT
+          id AS dbId,
+          public_id AS publicId,
+          title,
+          parent_page_id AS parentPageDbId
+        FROM story_pages
+        WHERE id = ?
+        `
+      )
+      .get(currentId);
+
+    if (!row) {
+      break;
+    }
+
+    trail.unshift({ id: row.publicId, title: row.title });
+    currentId = row.parentPageDbId;
+  }
+
+  return trail;
+}
+
+function getPreviousPages(pageId, limit = 5) {
+  const pages = [];
+  let currentId = pageId;
+
+  while (currentId && pages.length < limit) {
+    const row = db
+      .prepare(
+        `
+        SELECT
+          story_pages.id AS dbId,
+          story_pages.public_id AS id,
+          story_pages.title,
+          story_pages.body,
+          story_pages.is_stub AS isStub,
+          parent_pages.public_id AS parentPageId,
+          story_pages.parent_page_id AS parentPageDbId
+        FROM story_pages
+        LEFT JOIN story_pages AS parent_pages
+          ON parent_pages.id = story_pages.parent_page_id
+        WHERE story_pages.id = ?
+        `
+      )
+      .get(currentId);
+
+    if (!row) {
+      break;
+    }
+
+    pages.push({
+      body: row.body,
+      id: row.id,
+      isStub: row.isStub === 1,
+      parentPageId: row.parentPageId,
+      title: row.title
+    });
+    currentId = row.parentPageDbId;
+  }
+
+  return pages.reverse();
+}
+
+function getProposals(parentPageId, voterClawId = null) {
+  const viewerClawIds = Array.isArray(voterClawId)
+    ? voterClawId.filter(Boolean)
+    : voterClawId
+      ? [voterClawId]
+      : [];
+  const proposals = db
+    .prepare(
+      `
+      SELECT
+        proposals.id,
+        proposals.parent_page_id AS parentPageId,
+        proposals.entry_option_label AS entryOptionLabel,
+        proposals.page_title AS proposedTitle,
+        proposals.page_body AS proposedBody,
+        proposals.author_claw_id AS authorClawId,
+        proposals.author_model AS authorModel,
+        proposals.status,
+        proposals.created_at AS createdAt,
+        COUNT(proposal_votes.id) AS votes
+      FROM proposals
+      LEFT JOIN proposal_votes
+        ON proposal_votes.proposal_id = proposals.id
+      WHERE proposals.parent_page_id = ?
+      GROUP BY proposals.id
+      ORDER BY proposals.status ASC, votes DESC, proposals.created_at DESC
+      `
+    )
+    .all(parentPageId);
+
+  const proposalOptions = db
+    .prepare(
+      `
+      SELECT
+        proposal_id AS proposalId,
+        label
+      FROM proposal_options
+      WHERE proposal_id IN (
+        SELECT id
+        FROM proposals
+        WHERE parent_page_id = ?
+      )
+      ORDER BY proposal_id ASC, sort_order ASC
+      `
+    )
+    .all(parentPageId);
+
+  const optionsByProposal = new Map();
+  for (const row of proposalOptions) {
+    const bucket = optionsByProposal.get(row.proposalId) || [];
+    bucket.push(row.label);
+    optionsByProposal.set(row.proposalId, bucket);
+  }
+
+  return proposals.map((proposal) => ({
+    alreadyVoted: viewerClawIds.length ? hasVoted(proposal.id, viewerClawIds) : false,
+    authorClawId: proposal.authorClawId,
+    authorModel: proposal.authorModel,
+    createdAt: proposal.createdAt,
+    entryOptionLabel: proposal.entryOptionLabel,
+    id: proposal.id,
+    options: optionsByProposal.get(proposal.id) || [],
+    proposedBody: proposal.proposedBody,
+    proposedTitle: proposal.proposedTitle,
+    selfAuthored: viewerClawIds.includes(proposal.authorClawId),
+    status: proposal.status,
+    votes: proposal.votes
+  }));
+}
+
+function getProposalSummary(parentPageId, viewerClawIds = null) {
+  const viewerIds = Array.isArray(viewerClawIds)
+    ? viewerClawIds.filter(Boolean)
+    : viewerClawIds
+      ? [viewerClawIds]
+      : [];
+  const placeholders = viewerIds.map(() => "?").join(", ");
+  const viewerProposalCase = viewerIds.length
+    ? `COUNT(DISTINCT CASE
+          WHEN proposals.author_claw_id IN (${placeholders}) THEN proposals.id
+        END) AS viewerProposalCount`
+    : "0 AS viewerProposalCount";
+  const viewerVoteCase = viewerIds.length
+    ? `COUNT(DISTINCT CASE
+          WHEN proposal_votes.claw_id IN (${placeholders}) THEN proposal_votes.id
+        END) AS viewerVoteCount`
+    : "0 AS viewerVoteCount";
+  const params = viewerIds.length
+    ? [...viewerIds, ...viewerIds, parentPageId]
+    : [parentPageId];
+  const summary = db
+    .prepare(
+      `
+      SELECT
+        COUNT(DISTINCT proposals.author_claw_id) AS clawCount,
+        COUNT(DISTINCT proposals.id) AS proposalCount,
+        COUNT(proposal_votes.id) AS totalVotes,
+        COALESCE(MAX(proposal_vote_totals.voteCount), 0) AS leadingProposalVotes,
+        ${viewerProposalCase},
+        ${viewerVoteCase}
+      FROM proposals
+      LEFT JOIN proposal_votes
+        ON proposal_votes.proposal_id = proposals.id
+      LEFT JOIN (
+        SELECT proposal_id, COUNT(*) AS voteCount
+        FROM proposal_votes
+        GROUP BY proposal_id
+      ) AS proposal_vote_totals
+        ON proposal_vote_totals.proposal_id = proposals.id
+      WHERE proposals.parent_page_id = ?
+      `
+    )
+    .get(...params);
+
+  return {
+    clawCount: summary?.clawCount || 0,
+    proposalCount: summary?.proposalCount || 0,
+    totalVotes: summary?.totalVotes || 0,
+    leadingProposalVotes: summary?.leadingProposalVotes || 0,
+    viewerActed: Boolean((summary?.viewerProposalCount || 0) + (summary?.viewerVoteCount || 0)),
+    viewerProposalCount: summary?.viewerProposalCount || 0,
+    viewerVoteCount: summary?.viewerVoteCount || 0
+  };
+}
+
+function getHumanVisitCounts(pageIds) {
+  const uniquePageIds = [...new Set(pageIds.filter((pageId) => Number.isInteger(pageId) && pageId > 0))];
+
+  if (!uniquePageIds.length) {
+    return new Map();
+  }
+
+  const placeholders = uniquePageIds.map(() => "?").join(", ");
+  const rows = db
+    .prepare(
+      `
+      SELECT
+        page_id AS pageId,
+        COUNT(*) AS visitorCount
+      FROM human_page_visits
+      WHERE page_id IN (${placeholders})
+      GROUP BY page_id
+      `
+    )
+    .all(...uniquePageIds);
+
+  return new Map(rows.map((row) => [row.pageId, row.visitorCount]));
+}
+
+function getClawVisitCounts(pageIds) {
+  const uniquePageIds = [...new Set(pageIds.filter((pageId) => Number.isInteger(pageId) && pageId > 0))];
+
+  if (!uniquePageIds.length) {
+    return new Map();
+  }
+
+  const placeholders = uniquePageIds.map(() => "?").join(", ");
+  const rows = db
+    .prepare(
+      `
+      SELECT
+        page_id AS pageId,
+        COUNT(DISTINCT gateway_id) AS visitorCount
+      FROM claw_page_visits
+      WHERE page_id IN (${placeholders})
+      GROUP BY page_id
+      `
+    )
+    .all(...uniquePageIds);
+
+  return new Map(rows.map((row) => [row.pageId, row.visitorCount]));
+}
+
+function getTotalHumanPlayerCount() {
+  const row = db
+    .prepare(
+      `
+      SELECT COUNT(DISTINCT human_player_id) AS totalHumanPlayerCount
+      FROM human_page_visits
+      `
+    )
+    .get();
+
+  return row?.totalHumanPlayerCount || 0;
+}
+
+function getTotalClawPlayerCount() {
+  const row = db
+    .prepare(
+      `
+      SELECT COUNT(DISTINCT gateway_id) AS totalClawPlayerCount
+      FROM claw_page_visits
+      `
+    )
+    .get();
+
+  return row?.totalClawPlayerCount || 0;
+}
+
+function getPageState(pageId, voterClawId = null, includeProposalDetails = false) {
+  const rootPageId = getRootPageId();
+  const safePageId = resolvePageId(pageId) || rootPageId;
+  const loaded = getPage(safePageId) || getPage(rootPageId);
+
+  if (!loaded) {
+    throw new Error("Unable to load the story.");
+  }
+
+  const rootPagePublicId = getRootPagePublicId();
+  const humanVisitCounts = getHumanVisitCounts([
+    loaded.page.dbId,
+    loaded.page.parentPageDbId,
+    ...loaded.options.map((option) => option.targetPageDbId)
+  ]);
+  const clawVisitCounts = getClawVisitCounts([
+    loaded.page.dbId,
+    loaded.page.parentPageDbId,
+    ...loaded.options.map((option) => option.targetPageDbId)
+  ]);
+  const currentPageHumanVisitorCount = humanVisitCounts.get(loaded.page.dbId) || 0;
+  const currentPageClawVisitorCount = clawVisitCounts.get(loaded.page.dbId) || 0;
+  const parentPageHumanVisitorCount = loaded.page.parentPageDbId
+    ? humanVisitCounts.get(loaded.page.parentPageDbId) || 0
+    : 0;
+  const totalHumanPlayerCount = getTotalHumanPlayerCount();
+  const totalClawPlayerCount = getTotalClawPlayerCount();
+  const currentPageHumanVisitPercent = loaded.page.parentPageDbId
+    ? (
+        parentPageHumanVisitorCount > 0
+          ? Math.round(
+              (currentPageHumanVisitorCount / parentPageHumanVisitorCount) * 100
+            )
+          : 0
+      )
+    : 100;
+
+  const viewerClawIds = Array.isArray(voterClawId)
+    ? voterClawId.filter(Boolean)
+    : voterClawId
+      ? [voterClawId]
+      : [];
+
+  return {
+    breadcrumb: getBreadcrumb(loaded.page.dbId),
+    currentPageId: loaded.page.publicId,
+    options: loaded.options.map((option) => ({
+      humanVisitCount: humanVisitCounts.get(option.targetPageDbId) || 0,
+      humanVisitPercent:
+        currentPageHumanVisitorCount > 0
+          ? Math.round(
+              ((humanVisitCounts.get(option.targetPageDbId) || 0) /
+                currentPageHumanVisitorCount) *
+                100
+            )
+          : 0,
+      id: option.id,
+      label: option.label,
+      targetIsStub: option.targetIsStub === 1,
+      targetPageDbId: option.targetPageDbId,
+      targetPageId: option.targetPagePublicId,
+      targetTitle: option.targetTitle
+    })),
+    page: {
+      body: loaded.page.body,
+      clawVisitorCount: currentPageClawVisitorCount,
+      dbId: loaded.page.dbId,
+      globalClawVisitPercent:
+        totalClawPlayerCount > 0
+          ? Math.round(
+              (currentPageClawVisitorCount / totalClawPlayerCount) * 100
+            )
+          : 0,
+      globalHumanVisitPercent:
+        totalHumanPlayerCount > 0
+          ? Math.round(
+              (currentPageHumanVisitorCount / totalHumanPlayerCount) * 100
+            )
+          : 0,
+      humanVisitPercent: currentPageHumanVisitPercent,
+      humanVisitorCount: currentPageHumanVisitorCount,
+      id: loaded.page.publicId,
+      isStub: loaded.page.isStub === 1,
+      parentHumanVisitorCount: parentPageHumanVisitorCount,
+      parentPageDbId: loaded.page.parentPageDbId,
+      parentPageId: loaded.page.parentPagePublicId,
+      totalClawPlayerCount,
+      totalHumanPlayerCount,
+      title: loaded.page.title
+    },
+    previousPages: getPreviousPages(loaded.page.parentPageDbId, 5),
+    proposalSummary: getProposalSummary(loaded.page.dbId, viewerClawIds),
+    proposals: includeProposalDetails
+      ? getProposals(loaded.page.dbId, viewerClawIds)
+      : [],
+    rootPageId: rootPagePublicId
+  };
+}
+
+function recordHumanPageVisit({ humanPlayerId, pageId }) {
+  const resolvedPageId = resolvePageId(pageId);
+
+  if (!humanPlayerId || !resolvedPageId) {
+    return false;
+  }
+
+  db.prepare(
+    `
+    INSERT OR IGNORE INTO human_page_visits (human_player_id, page_id)
+    VALUES (?, ?)
+    `
+  ).run(humanPlayerId, resolvedPageId);
+
+  return true;
+}
+
+function createUser({ clawPasswordTokenHash = null, email = null }) {
+  const result = db
+    .prepare(
+      `
+      INSERT INTO users (email, claw_password_token_hash)
+      VALUES (?, ?)
+      `
+    )
+    .run(email, clawPasswordTokenHash);
+
+  return Number(result.lastInsertRowid);
+}
+
+function getUserByEmail(email) {
+  return (
+    db
+      .prepare(
+        `
+        SELECT
+          id,
+          email,
+          claw_password_token_hash AS clawPasswordTokenHash
+        FROM users
+        WHERE email = ?
+        `
+      )
+      .get(email) || null
+  );
+}
+
+function getUserByClawPasswordTokenHash(clawPasswordTokenHash) {
+  return (
+    db
+      .prepare(
+        `
+        SELECT
+          id,
+          email,
+          claw_password_token_hash AS clawPasswordTokenHash
+        FROM users
+        WHERE claw_password_token_hash = ?
+        LIMIT 1
+        `
+      )
+      .get(clawPasswordTokenHash) || null
+  );
+}
+
+function getUserById(userId) {
+  return (
+    db
+      .prepare(
+        `
+        SELECT id, email
+        FROM users
+        WHERE id = ?
+        `
+      )
+      .get(userId) || null
+  );
+}
+
+function listIdentityGatewayIdsForUser(userId) {
+  return db
+    .prepare(
+      `
+      SELECT DISTINCT identity_gateway_id AS identityGatewayId
+      FROM claw_gateways
+      WHERE user_id = ?
+        AND identity_gateway_id IS NOT NULL
+        AND identity_gateway_id != ''
+      ORDER BY COALESCE(handshake_at, created_at) ASC, id ASC
+      `
+    )
+    .all(userId)
+    .map((row) => row.identityGatewayId);
+}
+
+function getCanonicalIdentityGatewayIdForUser(userId) {
+  const row = db
+    .prepare(
+      `
+      SELECT identity_gateway_id AS identityGatewayId
+      FROM claw_gateways
+      WHERE user_id = ?
+        AND identity_gateway_id IS NOT NULL
+        AND identity_gateway_id != ''
+      ORDER BY COALESCE(handshake_at, created_at) ASC, id ASC
+      LIMIT 1
+      `
+    )
+    .get(userId);
+
+  return row ? row.identityGatewayId : null;
+}
+
+function getUserIdForClawIdentity(clawId) {
+  const row = db
+    .prepare(
+      `
+      SELECT user_id AS userId
+      FROM claw_gateways
+      WHERE identity_gateway_id = ?
+      ORDER BY COALESCE(handshake_at, created_at) ASC, id ASC
+      LIMIT 1
+      `
+    )
+    .get(clawId);
+
+  return row ? row.userId : null;
+}
+
+function createSession({ expiresAt, tokenHash, userId }) {
+  db.prepare(
+    `
+    INSERT INTO sessions (user_id, token_hash, expires_at)
+    VALUES (?, ?, ?)
+    `
+  ).run(userId, tokenHash, expiresAt.toISOString());
+}
+
+function getUserBySessionToken(tokenHash) {
+  const row = db
+    .prepare(
+      `
+      SELECT users.id, users.email
+      FROM sessions
+      INNER JOIN users
+        ON users.id = sessions.user_id
+      WHERE sessions.token_hash = ?
+        AND sessions.expires_at > ?
+      LIMIT 1
+      `
+    )
+    .get(tokenHash, new Date().toISOString());
+
+  return row || null;
+}
+
+function deleteSession(tokenHash) {
+  db.prepare("DELETE FROM sessions WHERE token_hash = ?").run(tokenHash);
+}
+
+function deleteUserIfOrphaned(userId) {
+  if (!userId) {
+    return;
+  }
+
+  const hasSessions = db
+    .prepare(
+      `
+      SELECT 1
+      FROM sessions
+      WHERE user_id = ?
+      LIMIT 1
+      `
+    )
+    .get(userId);
+  const hasGateways = db
+    .prepare(
+      `
+      SELECT 1
+      FROM claw_gateways
+      WHERE user_id = ?
+      LIMIT 1
+      `
+    )
+    .get(userId);
+
+  if (hasSessions || hasGateways) {
+    return;
+  }
+
+  db.prepare("DELETE FROM users WHERE id = ?").run(userId);
+}
+
+function cleanupExpiredGateways() {
+  db.prepare(
+    `
+    UPDATE claw_gateways
+    SET revoked_at = COALESCE(revoked_at, CURRENT_TIMESTAMP)
+    WHERE revoked_at IS NULL
+      AND expires_at <= ?
+    `
+  ).run(new Date().toISOString());
+}
+
+function playWindowActive(playExpiresAt) {
+  return Boolean(playExpiresAt && new Date(playExpiresAt).getTime() > Date.now());
+}
+
+function gatewayAllowsPlay(gateway) {
+  return (
+    gateway &&
+    (gateway.scopeType === "short_play" ||
+      gateway.scopeType === "long_lived" ||
+      gateway.scopeType === "branch_continuation") &&
+    playWindowActive(gateway.playExpiresAt)
+  );
+}
+
+function gatewayAllowsRestart(gateway) {
+  return gatewayAllowsPlay(gateway) && gateway.scopeType !== "branch_continuation";
+}
+
+function gatewaySupportsEvents(gateway) {
+  return gateway && gateway.scopeType === "long_lived";
+}
+
+function gatewayNotificationIdentity(gateway) {
+  return gateway?.notificationGatewayId || null;
+}
+
+function pageSnapshot(pageId) {
+  return (
+    db
+      .prepare(
+        `
+        SELECT id AS dbId, public_id AS id, title
+        FROM story_pages
+        WHERE id = ?
+        LIMIT 1
+        `
+      )
+      .get(pageId) || null
+  );
+}
+
+function createGatewayEvent({
+  availableAt = new Date().toISOString(),
+  eventType,
+  notificationGatewayId,
+  payload
+}) {
+  if (!notificationGatewayId) {
+    return;
+  }
+
+  db.prepare(
+    `
+    INSERT INTO claw_events (
+      notification_gateway_id,
+      event_type,
+      payload_json,
+      available_at
+    )
+    VALUES (?, ?, ?, ?)
+    `
+  ).run(notificationGatewayId, eventType, JSON.stringify(payload), availableAt);
+}
+
+function scheduleLongLivedGatewayNotifications({ gatewayId, expiresAt, pageId }) {
+  const playWindowEndsAt = new Date(Date.now() + CLAW_GATEWAY_TTL_MINUTES * 60 * 1000);
+  const playRenewalPage = pageSnapshot(resolvePageId(pageId));
+  const longLivedRenewalAt = new Date(
+    expiresAt.getTime() - 24 * 60 * 60 * 1000
+  );
+
+  createGatewayEvent({
+    availableAt: playWindowEndsAt.toISOString(),
+    eventType: "notification",
+    notificationGatewayId: gatewayId,
+    payload: {
+      message:
+        "Your 20-minute play window ended. Tell your human to renew it if " +
+        "you want another free-play run.",
+      renewalPath: `/byoclaw/renew-play/${encodeURIComponent(gatewayId)}`,
+      title: playRenewalPage
+        ? `Play window ended for ${playRenewalPage.title}`
+        : "Play window ended"
+    }
+  });
+
+  createGatewayEvent({
+    availableAt: longLivedRenewalAt.toISOString(),
+    eventType: "notification",
+    notificationGatewayId: gatewayId,
+    payload: {
+      message:
+        "This 7-day token is nearing expiry. Tell your human to issue a " +
+        "fresh long-lived prompt.",
+      renewalPath: playRenewalPage
+        ? `${formatPagePath(playRenewalPage.id)}?byoclaw=1`
+        : `/page/${encodeURIComponent(getRootPagePublicId())}?byoclaw=1`,
+      title: "7-day token renewal needed"
+    }
+  });
+}
+
+function formatPagePath(pageId) {
+  return `/page/${encodeURIComponent(pageId)}`;
+}
+
+function revokeOldestActiveGateway(userId) {
+  const row = db
+    .prepare(
+      `
+      SELECT id
+      FROM claw_gateways
+      WHERE user_id = ?
+        AND revoked_at IS NULL
+        AND expires_at > ?
+      ORDER BY created_at ASC
+      LIMIT 1
+      `
+    )
+    .get(userId, new Date().toISOString());
+
+  if (!row) {
+    return;
+  }
+
+  db.prepare(
+    `
+    UPDATE claw_gateways
+    SET revoked_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+    `
+  ).run(row.id);
+}
+
+function issueClawGateway({
+  gatewayId,
+  pageId,
+  scopeType = "short_play",
+  tokenHash,
+  ttlMinutes = CLAW_GATEWAY_TTL_MINUTES,
+  playTtlMinutes = ttlMinutes,
+  notificationGatewayId = null,
+  identityGatewayId = gatewayId,
+  clawName = null,
+  clawModel = null,
+  handshakeAt = null,
+  userId
+}) {
+  const resolvedPageId = resolvePageId(pageId);
+
+  if (!resolvedPageId) {
+    throw new Error("Page does not exist.");
+  }
+
+  cleanupExpiredGateways();
+
+  const activeCount = db
+    .prepare(
+      `
+      SELECT COUNT(*) AS count
+      FROM claw_gateways
+      WHERE user_id = ?
+        AND revoked_at IS NULL
+        AND expires_at > ?
+      `
+    )
+    .get(userId, new Date().toISOString()).count;
+
+  if (activeCount >= MAX_ACTIVE_CLAW_GATEWAYS_PER_USER) {
+    revokeOldestActiveGateway(userId);
+  }
+
+  const expiresAt = new Date(Date.now() + ttlMinutes * 60 * 1000);
+  const playExpiresAt = new Date(Date.now() + playTtlMinutes * 60 * 1000);
+  const resolvedNotificationGatewayId =
+    notificationGatewayId || (scopeType === "long_lived" ? gatewayId : null);
+
+  db.prepare(
+    `
+    INSERT INTO claw_gateways (
+      gateway_id,
+      user_id,
+      page_id,
+      current_page_id,
+      token_hash,
+      last_activity_at,
+      scope_type,
+      ttl_minutes,
+      expires_at
+      ,
+      play_expires_at,
+      notification_gateway_id,
+      identity_gateway_id,
+      claw_name,
+      claw_model,
+      handshake_at
+    )
+    VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `
+  ).run(
+    gatewayId,
+    userId,
+    resolvedPageId,
+    resolvedPageId,
+    tokenHash,
+    scopeType,
+    ttlMinutes,
+    expiresAt.toISOString(),
+    playExpiresAt.toISOString(),
+    resolvedNotificationGatewayId,
+    identityGatewayId,
+    clawName,
+    clawModel,
+    handshakeAt
+  );
+
+  recordGatewayPageVisit({ gatewayId, pageId: resolvedPageId });
+
+  if (scopeType === "long_lived") {
+    scheduleLongLivedGatewayNotifications({
+      expiresAt,
+      gatewayId,
+      pageId: resolvedPageId
+    });
+  }
+
+  return {
+    expiresAt,
+    gatewayId,
+    pageId,
+    playExpiresAt,
+    scopeType,
+    ttlMinutes
+  };
+}
+
+function listActiveGatewaysForUser(userId) {
+  cleanupExpiredGateways();
+
+  return db
+    .prepare(
+      `
+      SELECT
+        claw_gateways.gateway_id AS gatewayId,
+        story_pages.public_id AS pageId,
+        claw_gateways.created_at AS createdAt,
+        claw_gateways.last_activity_at AS lastActivityAt,
+        MAX(
+          0,
+          CAST(strftime('%s', 'now') AS INTEGER) -
+            CAST(strftime('%s', COALESCE(claw_gateways.last_activity_at, claw_gateways.created_at)) AS INTEGER)
+        ) AS idleSeconds,
+        claw_gateways.expires_at AS expiresAt,
+        claw_gateways.play_expires_at AS playExpiresAt,
+        claw_gateways.scope_type AS scopeType,
+        claw_gateways.ttl_minutes AS ttlMinutes,
+        claw_gateways.notification_gateway_id AS notificationGatewayId,
+        claw_gateways.identity_gateway_id AS identityGatewayId,
+        story_pages.title AS pageTitle,
+        claw_gateways.claw_name AS clawName,
+        claw_gateways.claw_model AS clawModel,
+        claw_gateways.handshake_at AS handshakeAt,
+        current_pages.public_id AS currentPageId,
+        current_pages.title AS currentPageTitle
+      FROM claw_gateways
+      INNER JOIN story_pages
+        ON story_pages.id = claw_gateways.page_id
+      LEFT JOIN story_pages AS current_pages
+        ON current_pages.id = claw_gateways.current_page_id
+      WHERE claw_gateways.user_id = ?
+        AND claw_gateways.revoked_at IS NULL
+        AND claw_gateways.expires_at > ?
+      ORDER BY claw_gateways.created_at DESC
+      `
+    )
+    .all(userId, new Date().toISOString());
+}
+
+function revokeGateway({ gatewayId, userId }) {
+  const result = db
+    .prepare(
+      `
+      UPDATE claw_gateways
+      SET revoked_at = CURRENT_TIMESTAMP
+      WHERE gateway_id = ?
+        AND user_id = ?
+        AND revoked_at IS NULL
+      `
+    )
+    .run(gatewayId, userId);
+
+  return result.changes > 0;
+}
+
+function findGatewayByTokenHash(tokenHash) {
+  return (
+    db
+      .prepare(
+        `
+        SELECT
+          claw_gateways.gateway_id AS gatewayId,
+          claw_gateways.user_id AS userId,
+          story_pages.public_id AS pageId,
+          current_pages.id AS currentPageDbId,
+          current_pages.public_id AS currentPageId,
+          claw_gateways.token_hash AS tokenHash,
+          claw_gateways.created_at AS createdAt,
+          claw_gateways.last_activity_at AS lastActivityAt,
+          MAX(
+            0,
+            CAST(strftime('%s', 'now') AS INTEGER) -
+              CAST(strftime('%s', COALESCE(claw_gateways.last_activity_at, claw_gateways.created_at)) AS INTEGER)
+          ) AS idleSeconds,
+          claw_gateways.expires_at AS expiresAt,
+          claw_gateways.play_expires_at AS playExpiresAt,
+          claw_gateways.scope_type AS scopeType,
+          claw_gateways.ttl_minutes AS ttlMinutes,
+          claw_gateways.notification_gateway_id AS notificationGatewayId,
+          claw_gateways.identity_gateway_id AS identityGatewayId,
+          claw_gateways.revoked_at AS revokedAt,
+          claw_gateways.claw_name AS clawName,
+          claw_gateways.claw_model AS clawModel,
+          claw_gateways.handshake_at AS handshakeAt,
+          users.email AS userEmail
+        FROM claw_gateways
+        INNER JOIN users
+          ON users.id = claw_gateways.user_id
+        INNER JOIN story_pages
+          ON story_pages.id = claw_gateways.page_id
+        LEFT JOIN story_pages AS current_pages
+          ON current_pages.id = claw_gateways.current_page_id
+        WHERE claw_gateways.token_hash = ?
+        LIMIT 1
+      `
+      )
+      .get(tokenHash) || null
+  );
+}
+
+function findGatewayById(gatewayId) {
+  return (
+    db
+      .prepare(
+        `
+        SELECT
+          claw_gateways.gateway_id AS gatewayId,
+          claw_gateways.user_id AS userId,
+          story_pages.public_id AS pageId,
+          current_pages.id AS currentPageDbId,
+          current_pages.public_id AS currentPageId,
+          claw_gateways.created_at AS createdAt,
+          claw_gateways.last_activity_at AS lastActivityAt,
+          MAX(
+            0,
+            CAST(strftime('%s', 'now') AS INTEGER) -
+              CAST(strftime('%s', COALESCE(claw_gateways.last_activity_at, claw_gateways.created_at)) AS INTEGER)
+          ) AS idleSeconds,
+          claw_gateways.expires_at AS expiresAt,
+          claw_gateways.play_expires_at AS playExpiresAt,
+          claw_gateways.scope_type AS scopeType,
+          claw_gateways.ttl_minutes AS ttlMinutes,
+          claw_gateways.notification_gateway_id AS notificationGatewayId,
+          claw_gateways.identity_gateway_id AS identityGatewayId,
+          claw_gateways.revoked_at AS revokedAt,
+          claw_gateways.claw_name AS clawName,
+          claw_gateways.claw_model AS clawModel,
+          claw_gateways.handshake_at AS handshakeAt,
+          users.email AS userEmail
+        FROM claw_gateways
+        INNER JOIN users
+          ON users.id = claw_gateways.user_id
+        INNER JOIN story_pages
+          ON story_pages.id = claw_gateways.page_id
+        LEFT JOIN story_pages AS current_pages
+          ON current_pages.id = claw_gateways.current_page_id
+        WHERE claw_gateways.gateway_id = ?
+        LIMIT 1
+      `
+      )
+      .get(gatewayId) || null
+  );
+}
+
+function getLatestActiveGatewayForUser(userId) {
+  cleanupExpiredGateways();
+
+  return (
+    db
+      .prepare(
+        `
+        SELECT
+          claw_gateways.gateway_id AS gatewayId,
+          story_pages.public_id AS pageId,
+          story_pages.title AS pageTitle,
+          current_pages.id AS currentPageDbId,
+          current_pages.public_id AS currentPageId,
+          current_pages.title AS currentPageTitle,
+          claw_gateways.created_at AS createdAt,
+          claw_gateways.last_activity_at AS lastActivityAt,
+          MAX(
+            0,
+            CAST(strftime('%s', 'now') AS INTEGER) -
+              CAST(strftime('%s', COALESCE(claw_gateways.last_activity_at, claw_gateways.created_at)) AS INTEGER)
+          ) AS idleSeconds,
+          claw_gateways.expires_at AS expiresAt,
+          claw_gateways.play_expires_at AS playExpiresAt,
+          claw_gateways.scope_type AS scopeType,
+          claw_gateways.ttl_minutes AS ttlMinutes,
+          claw_gateways.notification_gateway_id AS notificationGatewayId,
+          claw_gateways.identity_gateway_id AS identityGatewayId,
+          claw_gateways.claw_name AS clawName,
+          claw_gateways.claw_model AS clawModel,
+          claw_gateways.handshake_at AS handshakeAt
+        FROM claw_gateways
+        INNER JOIN story_pages
+          ON story_pages.id = claw_gateways.page_id
+        LEFT JOIN story_pages AS current_pages
+          ON current_pages.id = claw_gateways.current_page_id
+        WHERE claw_gateways.user_id = ?
+          AND claw_gateways.revoked_at IS NULL
+          AND claw_gateways.expires_at > ?
+        ORDER BY claw_gateways.created_at DESC
+        LIMIT 1
+        `
+      )
+      .get(userId, new Date().toISOString()) || null
+  );
+}
+
+function getLatestReadyGatewayForUser(userId) {
+  cleanupExpiredGateways();
+
+  return (
+    db
+      .prepare(
+        `
+        SELECT
+          claw_gateways.gateway_id AS gatewayId,
+          story_pages.public_id AS pageId,
+          story_pages.title AS pageTitle,
+          current_pages.id AS currentPageDbId,
+          current_pages.public_id AS currentPageId,
+          current_pages.title AS currentPageTitle,
+          claw_gateways.created_at AS createdAt,
+          claw_gateways.last_activity_at AS lastActivityAt,
+          MAX(
+            0,
+            CAST(strftime('%s', 'now') AS INTEGER) -
+              CAST(strftime('%s', COALESCE(claw_gateways.last_activity_at, claw_gateways.created_at)) AS INTEGER)
+          ) AS idleSeconds,
+          claw_gateways.expires_at AS expiresAt,
+          claw_gateways.play_expires_at AS playExpiresAt,
+          claw_gateways.scope_type AS scopeType,
+          claw_gateways.ttl_minutes AS ttlMinutes,
+          claw_gateways.notification_gateway_id AS notificationGatewayId,
+          claw_gateways.identity_gateway_id AS identityGatewayId,
+          claw_gateways.claw_name AS clawName,
+          claw_gateways.claw_model AS clawModel,
+          claw_gateways.handshake_at AS handshakeAt
+        FROM claw_gateways
+        INNER JOIN story_pages
+          ON story_pages.id = claw_gateways.page_id
+        LEFT JOIN story_pages AS current_pages
+          ON current_pages.id = claw_gateways.current_page_id
+        WHERE claw_gateways.user_id = ?
+          AND claw_gateways.revoked_at IS NULL
+          AND claw_gateways.expires_at > ?
+          AND claw_gateways.scope_type != 'legacy_branch_end_only'
+          AND claw_gateways.handshake_at IS NOT NULL
+          AND claw_gateways.claw_name IS NOT NULL
+          AND claw_gateways.claw_name != ''
+        ORDER BY claw_gateways.created_at DESC
+        LIMIT 1
+        `
+      )
+      .get(userId, new Date().toISOString()) || null
+  );
+}
+
+function completeGatewayHandshake({
+  clawPasswordTokenHash,
+  email = null,
+  gatewayId,
+  model,
+  name
+}) {
+  const normalizedName =
+    typeof name === "string" ? name.trim().slice(0, 120) : "";
+  const normalizedModel =
+    typeof model === "string" ? model.trim().slice(0, 160) : "";
+  const normalizedEmail =
+    typeof email === "string" && email.trim()
+      ? email.trim().toLowerCase()
+      : null;
+
+  if (!normalizedName) {
+    throw new Error("Claw name is required.");
+  }
+
+  if (!clawPasswordTokenHash) {
+    throw new Error("Claw password token hash is required.");
+  }
+
+  const performHandshake = db.transaction(() => {
+    const gateway = db
+      .prepare(
+        `
+        SELECT id, gateway_id AS gatewayId, user_id AS userId
+        FROM claw_gateways
+        WHERE gateway_id = ?
+          AND revoked_at IS NULL
+          AND expires_at > ?
+        LIMIT 1
+      `
+      )
+      .get(gatewayId, new Date().toISOString());
+
+    if (!gateway) {
+      return {
+        ok: false,
+        reason: "HANDSHAKE_REJECTED"
+      };
+    }
+
+    const existingUser = db
+      .prepare(
+        `
+        SELECT id
+        FROM users
+        WHERE claw_password_token_hash = ?
+        LIMIT 1
+      `
+      )
+      .get(clawPasswordTokenHash);
+    const targetUserId = existingUser ? existingUser.id : gateway.userId;
+    const canonicalIdentityGatewayId =
+      getCanonicalIdentityGatewayIdForUser(targetUserId) || gateway.gatewayId;
+
+    try {
+      if (existingUser) {
+        if (normalizedEmail) {
+          db.prepare(
+            `
+            UPDATE users
+            SET email = ?
+            WHERE id = ?
+          `
+          ).run(normalizedEmail, existingUser.id);
+        }
+      } else {
+        db.prepare(
+          `
+          UPDATE users
+          SET
+            claw_password_token_hash = ?,
+            email = COALESCE(?, email)
+          WHERE id = ?
+        `
+        ).run(clawPasswordTokenHash, normalizedEmail, gateway.userId);
+      }
+    } catch (error) {
+      if (
+        error &&
+        error.code === "SQLITE_CONSTRAINT_UNIQUE"
+      ) {
+        return {
+          ok: false,
+          reason: "EMAIL_IN_USE"
+        };
+      }
+
+      throw error;
+    }
+
+    const result = db
+      .prepare(
+        `
+        UPDATE claw_gateways
+        SET
+          user_id = ?,
+          identity_gateway_id = ?,
+          claw_name = ?,
+          claw_model = ?,
+          handshake_at = COALESCE(handshake_at, CURRENT_TIMESTAMP),
+          last_activity_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `
+      )
+      .run(
+        targetUserId,
+        canonicalIdentityGatewayId,
+        normalizedName,
+        normalizedModel,
+        gateway.id
+      );
+
+    if (gateway.userId !== targetUserId) {
+      deleteUserIfOrphaned(gateway.userId);
+    }
+
+    return {
+      ok: result.changes > 0,
+      reason: result.changes > 0 ? null : "HANDSHAKE_REJECTED",
+      userId: targetUserId
+    };
+  });
+
+  return performHandshake();
+}
+
+function renewGatewayPlayWindow({
+  gatewayId,
+  playTtlMinutes = CLAW_GATEWAY_TTL_MINUTES,
+  userId
+}) {
+  const row = db
+    .prepare(
+      `
+      SELECT expires_at AS expiresAt
+      FROM claw_gateways
+      WHERE gateway_id = ?
+        AND user_id = ?
+        AND scope_type = 'long_lived'
+        AND revoked_at IS NULL
+        AND expires_at > ?
+      LIMIT 1
+      `
+    )
+    .get(gatewayId, userId, new Date().toISOString());
+
+  if (!row) {
+    return null;
+  }
+
+  const nextPlayExpiry = new Date(
+    Math.min(
+      new Date(row.expiresAt).getTime(),
+      Date.now() + playTtlMinutes * 60 * 1000
+    )
+  );
+
+  db.prepare(
+    `
+    UPDATE claw_gateways
+    SET
+      play_expires_at = ?,
+      last_activity_at = CURRENT_TIMESTAMP
+    WHERE gateway_id = ?
+    `
+  ).run(nextPlayExpiry.toISOString(), gatewayId);
+
+  return nextPlayExpiry;
+}
+
+function recordGatewayActivity({ gatewayId, activityType, summary }) {
+  db.prepare(
+    `
+    INSERT INTO claw_activity (gateway_id, activity_type, summary)
+    VALUES (?, ?, ?)
+    `
+  ).run(gatewayId, activityType, summary);
+}
+
+function recordGatewayPageVisit({ gatewayId, pageId }) {
+  db.prepare(
+    `
+    INSERT OR IGNORE INTO claw_page_visits (gateway_id, page_id)
+    VALUES (?, ?)
+    `
+  ).run(gatewayId, pageId);
+}
+
+function registerGatewayBranchInterest({ notificationGatewayId, pageId }) {
+  const resolvedPageId = resolvePageId(pageId);
+
+  if (!notificationGatewayId || !resolvedPageId) {
+    return false;
+  }
+
+  db.prepare(
+    `
+    INSERT OR IGNORE INTO claw_branch_interests (notification_gateway_id, page_id)
+    VALUES (?, ?)
+    `
+  ).run(notificationGatewayId, resolvedPageId);
+
+  return true;
+}
+
+function hasGatewayBranchInterest({ notificationGatewayId, pageId }) {
+  const resolvedPageId = resolvePageId(pageId);
+
+  if (!notificationGatewayId || !resolvedPageId) {
+    return false;
+  }
+
+  const row = db
+    .prepare(
+      `
+      SELECT id
+      FROM claw_branch_interests
+      WHERE notification_gateway_id = ?
+        AND page_id = ?
+      LIMIT 1
+      `
+    )
+    .get(notificationGatewayId, resolvedPageId);
+
+  return Boolean(row);
+}
+
+function listGatewayEvents(notificationGatewayId) {
+  if (!notificationGatewayId) {
+    return [];
+  }
+
+  const rows = db
+    .prepare(
+      `
+      SELECT id, event_type AS eventType, payload_json AS payloadJson, created_at AS createdAt
+      FROM claw_events
+      WHERE notification_gateway_id = ?
+        AND available_at <= ?
+      ORDER BY available_at DESC, id DESC
+      LIMIT 100
+      `
+    )
+    .all(notificationGatewayId, new Date().toISOString());
+
+  return rows.map((row) => ({
+    createdAt: row.createdAt,
+    id: row.id,
+    type: row.eventType,
+    ...JSON.parse(row.payloadJson)
+  }));
+}
+
+function createProposalEnactedEvents({ parentPageId, proposalId, targetPageId }) {
+  const parentPage = pageSnapshot(parentPageId);
+  const targetPage = pageSnapshot(targetPageId);
+  const interests = db
+    .prepare(
+      `
+      SELECT notification_gateway_id AS notificationGatewayId
+      FROM claw_branch_interests
+      WHERE page_id = ?
+      `
+    )
+    .all(parentPageId);
+
+  for (const interest of interests) {
+    const continuationId = randomBase64UrlToken(12, "cca_continue_");
+
+    db.prepare(
+      `
+      INSERT INTO claw_continuations (
+        continuation_id,
+        notification_gateway_id,
+        parent_page_id,
+        target_page_id,
+        proposal_id
+      )
+      VALUES (?, ?, ?, ?, ?)
+      `
+    ).run(
+      continuationId,
+      interest.notificationGatewayId,
+      parentPageId,
+      targetPageId,
+      proposalId
+    );
+
+    createGatewayEvent({
+      eventType: "proposal-enacted",
+      notificationGatewayId: interest.notificationGatewayId,
+      payload: {
+        continuation: {
+          method: "POST",
+          oneTime: true,
+          path:
+            `/api/claw/continuations/${encodeURIComponent(continuationId)}/redeem`
+        },
+        parentPage: parentPage ? { id: parentPage.id, title: parentPage.title } : null,
+        proposalId,
+        targetPage: targetPage ? { id: targetPage.id, title: targetPage.title } : null
+      }
+    });
+  }
+}
+
+function redeemContinuation({
+  continuationId,
+  gatewayId,
+  userId
+}) {
+  const continuation = db
+    .prepare(
+      `
+      SELECT
+        claw_continuations.id,
+        claw_continuations.parent_page_id AS parentPageId,
+        claw_continuations.target_page_id AS targetPageId,
+        claw_continuations.proposal_id AS proposalId,
+        claw_continuations.notification_gateway_id AS notificationGatewayId,
+        claw_continuations.redeemed_at AS redeemedAt,
+        claw_gateways.claw_name AS clawName,
+        claw_gateways.claw_model AS clawModel,
+        claw_gateways.handshake_at AS handshakeAt,
+        claw_gateways.identity_gateway_id AS identityGatewayId,
+        claw_gateways.expires_at AS gatewayExpiresAt
+      FROM claw_continuations
+      INNER JOIN claw_gateways
+        ON claw_gateways.gateway_id = claw_continuations.notification_gateway_id
+      WHERE claw_continuations.continuation_id = ?
+        AND claw_continuations.notification_gateway_id = ?
+        AND claw_gateways.user_id = ?
+        AND claw_gateways.revoked_at IS NULL
+        AND claw_gateways.expires_at > ?
+      LIMIT 1
+      `
+    )
+    .get(continuationId, gatewayId, userId, new Date().toISOString());
+
+  if (!continuation || continuation.redeemedAt) {
+    return null;
+  }
+
+  const token = randomBase64UrlToken(24, "cca_claw_");
+  const continuationGatewayId = randomBase64UrlToken(12, "cca_gateway_");
+  const continuationGateway = issueClawGateway({
+    clawName: continuation.clawName,
+    clawModel: continuation.clawModel,
+    gatewayId: continuationGatewayId,
+    handshakeAt: continuation.handshakeAt,
+    identityGatewayId: continuation.identityGatewayId || gatewayId,
+    notificationGatewayId: continuation.notificationGatewayId,
+    pageId: continuation.targetPageId,
+    playTtlMinutes: CLAW_GATEWAY_TTL_MINUTES,
+    scopeType: "branch_continuation",
+    tokenHash: hashToken(token),
+    ttlMinutes: CLAW_GATEWAY_TTL_MINUTES,
+    userId
+  });
+
+  const result = db
+    .prepare(
+      `
+      UPDATE claw_continuations
+      SET
+        redeemed_at = CURRENT_TIMESTAMP,
+        continuation_gateway_id = ?
+      WHERE id = ?
+        AND redeemed_at IS NULL
+      `
+    )
+    .run(continuationGatewayId, continuation.id);
+
+  if (result.changes === 0) {
+    revokeGateway({ gatewayId: continuationGatewayId, userId });
+    return null;
+  }
+
+  return {
+    gateway: {
+      ...continuationGateway,
+      clawName: continuation.clawName,
+      clawModel: continuation.clawModel,
+      handshakeAt: continuation.handshakeAt,
+      identityGatewayId: continuation.identityGatewayId || gatewayId,
+      notificationGatewayId: continuation.notificationGatewayId
+    },
+    proposalId: continuation.proposalId,
+    targetPage: pageSnapshot(continuation.targetPageId),
+    token
+  };
+}
+
+function updateGatewayCurrentPage({ gatewayId, pageId }) {
+  const resolvedPageId = resolvePageId(pageId);
+
+  if (!resolvedPageId) {
+    return false;
+  }
+
+  const result = db
+    .prepare(
+      `
+      UPDATE claw_gateways
+      SET
+        current_page_id = ?,
+        last_activity_at = CURRENT_TIMESTAMP
+      WHERE gateway_id = ?
+        AND revoked_at IS NULL
+        AND expires_at > ?
+      `
+    )
+    .run(resolvedPageId, gatewayId, new Date().toISOString());
+
+  if (result.changes > 0) {
+    recordGatewayPageVisit({ gatewayId, pageId: resolvedPageId });
+  }
+
+  return result.changes > 0;
+}
+
+function restartGatewayCurrentPage(gatewayId) {
+  const rootPage = db
+    .prepare(
+      `
+      SELECT id
+      FROM story_pages
+      WHERE parent_page_id IS NULL
+      ORDER BY id ASC
+      LIMIT 1
+      `
+    )
+    .get();
+
+  const result = db
+    .prepare(
+      `
+      UPDATE claw_gateways
+      SET
+        current_page_id = (
+        SELECT id
+        FROM story_pages
+        WHERE parent_page_id IS NULL
+        ORDER BY id ASC
+        LIMIT 1
+      ),
+        last_activity_at = CURRENT_TIMESTAMP
+      WHERE gateway_id = ?
+        AND revoked_at IS NULL
+        AND expires_at > ?
+      `
+    )
+    .run(gatewayId, new Date().toISOString());
+
+  if (result.changes > 0 && rootPage) {
+    recordGatewayPageVisit({ gatewayId, pageId: rootPage.id });
+  }
+
+  return result.changes > 0;
+}
+
+function findOptionTargetForPage({ optionId, pageId }) {
+  const numericOptionId = Number(optionId);
+  const resolvedPageId = resolvePageId(pageId);
+
+  if (!Number.isInteger(numericOptionId) || numericOptionId <= 0 || !resolvedPageId) {
+    return null;
+  }
+
+  return (
+    db
+      .prepare(
+        `
+        SELECT
+          page_options.id,
+          target_pages.id AS targetPageDbId,
+          target_pages.public_id AS targetPageId
+        FROM page_options
+        INNER JOIN story_pages AS target_pages
+          ON target_pages.id = page_options.target_page_id
+        WHERE page_options.id = ?
+          AND page_options.page_id = ?
+        LIMIT 1
+        `
+      )
+      .get(numericOptionId, resolvedPageId) || null
+  );
+}
+
+function getGatewayActivity(gatewayId) {
+  const items = [];
+  const gateway = db
+    .prepare(
+      `
+      SELECT
+        claw_gateways.gateway_id AS gatewayId,
+        claw_gateways.created_at AS createdAt,
+        claw_gateways.handshake_at AS handshakeAt,
+        claw_gateways.claw_name AS clawName,
+        claw_gateways.claw_model AS clawModel,
+        start_pages.title AS pageTitle,
+        start_pages.public_id AS pageId,
+        current_pages.title AS currentPageTitle,
+        current_pages.public_id AS currentPageId
+      FROM claw_gateways
+      INNER JOIN story_pages AS start_pages
+        ON start_pages.id = claw_gateways.page_id
+      LEFT JOIN story_pages AS current_pages
+        ON current_pages.id = claw_gateways.current_page_id
+      WHERE claw_gateways.gateway_id = ?
+      LIMIT 1
+      `
+    )
+    .get(gatewayId);
+
+  if (!gateway) {
+    return {
+      items,
+      visitedPageCount: 0
+    };
+  }
+
+  items.push({
+    createdAt: gateway.createdAt,
+    summary: `Session started from ${gateway.pageTitle}.`,
+    type: "session"
+  });
+
+  if (gateway.handshakeAt && gateway.clawName) {
+    items.push({
+      createdAt: gateway.handshakeAt,
+      summary:
+        `Handshake completed as ${gateway.clawName} using ` +
+        `${gateway.clawModel || "unknown"}.`,
+      type: "handshake"
+    });
+  }
+
+  const proposals = db
+    .prepare(
+      `
+      SELECT
+        proposals.id,
+        proposals.page_title AS proposedTitle,
+        proposals.created_at AS createdAt,
+        CASE
+          WHEN parent_pages.is_stub = 1 AND grandparent_pages.title IS NOT NULL
+            THEN grandparent_pages.title
+          ELSE parent_pages.title
+        END AS parentPageTitle
+      FROM proposals
+      INNER JOIN story_pages AS parent_pages
+        ON parent_pages.id = proposals.parent_page_id
+      LEFT JOIN story_pages AS grandparent_pages
+        ON grandparent_pages.id = parent_pages.parent_page_id
+      WHERE proposals.author_claw_id = ?
+      ORDER BY proposals.created_at DESC, proposals.id DESC
+      `
+    )
+    .all(gatewayId);
+
+  for (const proposal of proposals) {
+    items.push({
+      createdAt: proposal.createdAt,
+      proposalId: proposal.id,
+      summary:
+        `Created proposal #${proposal.id} "${proposal.proposedTitle}" to follow ` +
+        `"${proposal.parentPageTitle}".`,
+      type: "proposal"
+    });
+  }
+
+  const votes = db
+    .prepare(
+      `
+      SELECT
+        proposal_votes.proposal_id AS proposalId,
+        proposal_votes.created_at AS createdAt,
+        proposals.page_title AS pageTitle
+      FROM proposal_votes
+      INNER JOIN proposals
+        ON proposals.id = proposal_votes.proposal_id
+      WHERE proposal_votes.claw_id = ?
+      ORDER BY proposal_votes.created_at DESC, proposal_votes.id DESC
+      `
+    )
+    .all(gatewayId);
+
+  for (const vote of votes) {
+    items.push({
+      createdAt: vote.createdAt,
+      summary: `Voted on proposal #${vote.proposalId} "${vote.pageTitle}".`,
+      type: "vote"
+    });
+  }
+
+  const visitRow = db
+    .prepare(
+      `
+      SELECT COUNT(*) AS visitedPageCount
+      FROM claw_page_visits
+      WHERE gateway_id = ?
+      `
+    )
+    .get(gatewayId);
+
+  return {
+    items: items.sort((left, right) => {
+      const leftTime = new Date(left.createdAt).getTime();
+      const rightTime = new Date(right.createdAt).getTime();
+      return rightTime - leftTime;
+    }),
+    visitedPageCount: visitRow ? visitRow.visitedPageCount : 0
+  };
+}
+
+function getProposalParentPageId(proposalId) {
+  const row = db
+    .prepare(
+      `
+      SELECT
+        story_pages.public_id AS parentPageId
+      FROM proposals
+      INNER JOIN story_pages
+        ON story_pages.id = proposals.parent_page_id
+      WHERE proposals.id = ?
+      LIMIT 1
+      `
+    )
+    .get(proposalId);
+
+  return row ? row.parentPageId : null;
+}
+
+function listClawsForUser(userId) {
+  return db
+    .prepare(
+      `
+      SELECT
+        claw_id AS clawId,
+        last_join_page_id AS lastJoinPageId,
+        created_at AS createdAt,
+        updated_at AS updatedAt
+      FROM claws
+      WHERE user_id = ?
+      ORDER BY updated_at DESC, claw_id ASC
+      `
+    )
+    .all(userId);
+}
+
+function createClaw({ clawId, pageId, tokenHash, userId }) {
+  const resolvedPageId = resolvePageId(pageId);
+
+  db.prepare(
+    `
+    INSERT INTO claws (user_id, claw_id, token_hash, last_join_page_id)
+    VALUES (?, ?, ?, ?)
+    `
+  ).run(userId, clawId, tokenHash, resolvedPageId);
+}
+
+function updateClawContext({ clawId, pageId, userId }) {
+  const resolvedPageId = resolvePageId(pageId);
+  const result = db
+    .prepare(
+      `
+      UPDATE claws
+      SET
+        last_join_page_id = ?,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE user_id = ?
+        AND claw_id = ?
+      `
+    )
+    .run(resolvedPageId, userId, clawId);
+
+  return result.changes > 0;
+}
+
+function rotateClawToken({ clawId, pageId, tokenHash, userId }) {
+  const resolvedPageId = resolvePageId(pageId);
+  const result = db
+    .prepare(
+      `
+      UPDATE claws
+      SET
+        token_hash = ?,
+        last_join_page_id = ?,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE user_id = ?
+        AND claw_id = ?
+      `
+    )
+    .run(tokenHash, resolvedPageId, userId, clawId);
+
+  return result.changes > 0;
+}
+
+function findClawForAuth(clawId, tokenHash) {
+  return (
+    db
+      .prepare(
+        `
+        SELECT
+          claw_id AS clawId,
+          last_join_page_id AS lastJoinPageId,
+          user_id AS userId
+        FROM claws
+        WHERE claw_id = ?
+          AND token_hash = ?
+        LIMIT 1
+        `
+      )
+      .get(clawId, tokenHash) || null
+  );
+}
+
+function cleanupExpiredNonces() {
+  db.prepare("DELETE FROM claw_nonces WHERE expires_at <= datetime('now')").run();
+}
+
+function registerClawNonce(clawId, nonce) {
+  cleanupExpiredNonces();
+
+  try {
+    db.prepare(
+      `
+      INSERT INTO claw_nonces (nonce, claw_id, expires_at)
+      VALUES (?, ?, datetime('now', '+1 hour'))
+      `
+    ).run(nonce, clawId);
+
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function hasVoted(proposalId, clawId) {
+  const clawIds = Array.isArray(clawId)
+    ? clawId.filter(Boolean)
+    : clawId
+      ? [clawId]
+      : [];
+
+  if (!clawIds.length) {
+    return false;
+  }
+
+  const placeholders = clawIds.map(() => "?").join(", ");
+  const row = db
+    .prepare(
+      `
+      SELECT id
+      FROM proposal_votes
+      WHERE proposal_id = ?
+        AND claw_id IN (${placeholders})
+      LIMIT 1
+      `
+    )
+    .get(proposalId, ...clawIds);
+
+  return Boolean(row);
+}
+
+function createProposal(input) {
+  const transaction = db.transaction(() => {
+    const parentPageId = resolvePageId(input.parentPageId);
+    const pageExists = db
+      .prepare("SELECT id FROM story_pages WHERE id = ?")
+      .get(parentPageId);
+
+    if (!pageExists) {
+      throw new Error("Parent page does not exist.");
+    }
+
+    const existingOptions = db
+      .prepare("SELECT COUNT(*) AS count FROM page_options WHERE page_id = ?")
+      .get(parentPageId).count;
+
+    if (existingOptions > 0) {
+      throw new Error("Proposals can only be created from a branch end.");
+    }
+
+    const entryOptionLabel = getIncomingOptionLabel(parentPageId);
+
+    if (!entryOptionLabel) {
+      throw new Error("Parent page must have an incoming option.");
+    }
+
+    const result = db
+      .prepare(
+        `
+        INSERT INTO proposals (
+          parent_page_id,
+          entry_option_label,
+          page_title,
+          page_body,
+          author_claw_id,
+          author_model
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+        `
+      )
+      .run(
+        parentPageId,
+        entryOptionLabel,
+        input.proposedTitle,
+        input.proposedBody,
+        input.authorClawId,
+        input.authorModel
+      );
+
+    const proposalId = Number(result.lastInsertRowid);
+    const insertOption = db.prepare(
+      `
+      INSERT INTO proposal_options (proposal_id, label, sort_order)
+      VALUES (?, ?, ?)
+      `
+    );
+
+    input.options.forEach((label, index) => {
+      insertOption.run(proposalId, label, index + 1);
+    });
+
+    db.prepare(
+      `
+      UPDATE claw_gateways
+      SET last_activity_at = CURRENT_TIMESTAMP
+      WHERE gateway_id = ?
+      `
+    ).run(input.authorClawId);
+
+    return proposalId;
+  });
+
+  const proposalId = transaction();
+
+  if (input.notificationGatewayId) {
+    registerGatewayBranchInterest({
+      notificationGatewayId: input.notificationGatewayId,
+      pageId: input.parentPageId
+    });
+  }
+
+  return proposalId;
+}
+
+function nextOptionSortOrder(pageId) {
+  const row = db
+    .prepare(
+      `
+      SELECT COALESCE(MAX(sort_order), 0) + 1 AS nextSortOrder
+      FROM page_options
+      WHERE page_id = ?
+      `
+    )
+    .get(pageId);
+
+  return row.nextSortOrder;
+}
+
+function approveProposal(proposalId) {
+  const proposal = db
+    .prepare(
+      `
+      SELECT
+        id,
+        parent_page_id AS parentPageId,
+        entry_option_label AS entryOptionLabel,
+        page_title AS pageTitle,
+        page_body AS pageBody,
+        status
+      FROM proposals
+      WHERE id = ?
+      `
+    )
+    .get(proposalId);
+
+  if (!proposal || proposal.status !== "pending") {
+    return;
+  }
+
+  const parentPage = db
+    .prepare(
+      `
+      SELECT is_stub AS isStub
+      FROM story_pages
+      WHERE id = ?
+      `
+    )
+    .get(proposal.parentPageId);
+
+  if (!parentPage) {
+    return;
+  }
+
+  const options = db
+    .prepare(
+      `
+      SELECT label
+      FROM proposal_options
+      WHERE proposal_id = ?
+      ORDER BY sort_order ASC
+      `
+    )
+    .all(proposalId);
+
+  let approvedPageId = null;
+
+  const transaction = db.transaction(() => {
+    const materializedPageId =
+      parentPage.isStub === 1
+        ? proposal.parentPageId
+        : insertStoryPage(db, {
+            parentPageId: proposal.parentPageId,
+            title: proposal.pageTitle,
+            body: proposal.pageBody,
+            isStub: 0
+          });
+
+    if (parentPage.isStub === 1) {
+      db.prepare(
+        `
+        UPDATE story_pages
+        SET
+          title = ?,
+          body = ?,
+          is_stub = 0
+        WHERE id = ?
+        `
+      ).run(proposal.pageTitle, proposal.pageBody, materializedPageId);
+    } else {
+      db.prepare(
+        `
+        INSERT INTO page_options (page_id, label, target_page_id, sort_order)
+        VALUES (?, ?, ?, ?)
+        `
+      ).run(
+        proposal.parentPageId,
+        proposal.entryOptionLabel,
+        materializedPageId,
+        nextOptionSortOrder(proposal.parentPageId)
+      );
+    }
+
+    const insertOption = db.prepare(
+      `
+      INSERT INTO page_options (page_id, label, target_page_id, sort_order)
+      VALUES (?, ?, ?, ?)
+      `
+    );
+
+    options.forEach((option, index) => {
+      const stubPageId = insertStoryPage(db, {
+        parentPageId: materializedPageId,
+        title: "Uncharted Path",
+        body: `Branch seeded by option: "${option.label}". A claw must canonize the next scene.`,
+        isStub: 1
+      });
+
+      insertOption.run(
+        materializedPageId,
+        option.label,
+        stubPageId,
+        index + 1
+      );
+    });
+
+    db.prepare(
+      `
+      UPDATE proposals
+      SET
+        status = 'approved',
+        approved_page_id = ?
+      WHERE id = ?
+      `
+    ).run(materializedPageId, proposalId);
+
+    approvedPageId = materializedPageId;
+  });
+
+  transaction();
+
+  if (approvedPageId) {
+    createProposalEnactedEvents({
+      parentPageId: proposal.parentPageId,
+      proposalId,
+      targetPageId: approvedPageId
+    });
+  }
+}
+
+function castVote({ clawId, notificationGatewayId = clawId, proposalId }) {
+  let accepted = true;
+  let interestedParentPageId = null;
+
+  const transaction = db.transaction(() => {
+    const proposal = db
+      .prepare(
+        "SELECT id, status, author_claw_id AS authorClawId, parent_page_id AS parentPageId FROM proposals WHERE id = ?"
+      )
+      .get(proposalId);
+
+    if (!proposal) {
+      throw new Error("Proposal does not exist.");
+    }
+
+    const voterUserId = getUserIdForClawIdentity(clawId);
+    const authorUserId = getUserIdForClawIdentity(proposal.authorClawId);
+
+    if (
+      proposal.authorClawId === clawId ||
+      (voterUserId && authorUserId && voterUserId === authorUserId)
+    ) {
+      throw new Error("Claws cannot vote for their own proposals.");
+    }
+
+    if (proposal.status !== "pending") {
+      accepted = false;
+      return;
+    }
+
+    try {
+      db.prepare(
+        `
+        INSERT INTO proposal_votes (proposal_id, claw_id)
+        VALUES (?, ?)
+        `
+      ).run(proposalId, clawId);
+    } catch {
+      accepted = false;
+    }
+
+    const votes = db
+      .prepare(
+        `
+        SELECT COUNT(*) AS count
+        FROM proposal_votes
+        WHERE proposal_id = ?
+        `
+      )
+      .get(proposalId).count;
+
+    if (votes >= VOTE_THRESHOLD) {
+      approveProposal(proposalId);
+    }
+
+    if (accepted) {
+      interestedParentPageId = proposal.parentPageId;
+      db.prepare(
+        `
+        UPDATE claw_gateways
+        SET last_activity_at = CURRENT_TIMESTAMP
+        WHERE gateway_id = ?
+        `
+      ).run(clawId);
+    }
+  });
+
+  transaction();
+
+  if (accepted && interestedParentPageId) {
+    registerGatewayBranchInterest({
+      notificationGatewayId,
+      pageId: interestedParentPageId
+    });
+  }
+
+  const proposal = db
+    .prepare(
+      `
+      SELECT status
+      FROM proposals
+      WHERE id = ?
+      `
+    )
+    .get(proposalId);
+
+  const votes = db
+    .prepare(
+      `
+      SELECT COUNT(*) AS count
+      FROM proposal_votes
+      WHERE proposal_id = ?
+      `
+    )
+    .get(proposalId).count;
+
+  return {
+    accepted,
+    approved: proposal.status === "approved",
+    votes
+  };
+}
+
+module.exports = {
+  castVote,
+  completeGatewayHandshake,
+  createClaw,
+  createProposal,
+  createSession,
+  createUser,
+  deleteSession,
+  findClawForAuth,
+  findGatewayById,
+  findOptionTargetForPage,
+  getProposalParentPageId,
+  findPageIdByPublicId,
+  findGatewayByTokenHash,
+  hasGatewayBranchInterest,
+  getPageState,
+  getLatestActiveGatewayForUser,
+  getGatewayActivity,
+  getLatestReadyGatewayForUser,
+  listIdentityGatewayIdsForUser,
+  listGatewayEvents,
+  getRootPageId,
+  getRootPagePublicId,
+  getStoryStats,
+  getUserByClawPasswordTokenHash,
+  getUserByEmail,
+  getUserById,
+  getUserBySessionToken,
+  hasVoted,
+  issueClawGateway,
+  listActiveGatewaysForUser,
+  listClawsForUser,
+  recordHumanPageVisit,
+  registerClawNonce,
+  redeemContinuation,
+  restartGatewayCurrentPage,
+  revokeGateway,
+  renewGatewayPlayWindow,
+  rotateClawToken,
+  updateGatewayCurrentPage,
+  updateClawContext
+};
