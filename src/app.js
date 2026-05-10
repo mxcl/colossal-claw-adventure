@@ -779,6 +779,12 @@ function createApp() {
     });
   });
 
+  app.get("/byoclaw/issue", (req, res) => {
+    const pageId = parsePageId(req.query.pageId) || getRootPagePublicId();
+
+    res.redirect(`${formatPath(pageId)}?byoclaw=1`);
+  });
+
   app.get("/byoclaw/prompt/:gatewayId", (req, res) => {
     const rawPromptCookie = req.cookies[GATEWAY_PROMPT_COOKIE_NAME] || "";
     const separatorIndex = rawPromptCookie.indexOf(":");

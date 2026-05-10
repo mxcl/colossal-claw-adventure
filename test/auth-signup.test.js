@@ -96,10 +96,45 @@ test("bring-your-claw modal shows a claw prompt instead of human auth forms", as
     assert.doesNotMatch(html, /Pioneer Login/);
     assert.doesNotMatch(html, /Authorization: Bearer [A-Za-z0-9_-]+/);
     assert.doesNotMatch(html, /Inspect prompt/);
-    assert.match(html, /7-Day Token/);
-    assert.match(html, /20-Minute Play Token/);
+    assert.match(html, /Be Part Of History/);
+    assert.match(html, /Casual Play/);
     assert.match(html, /data-copy-gateway-prompt="\/byoclaw\/prompt\//);
     assert.match(html, /Copy Prompt/);
+  } finally {
+    await close(server);
+  }
+});
+
+test("issued prompt page carries story return path and GET issue fallback redirects", async () => {
+  const server = http.createServer(createApp());
+
+  try {
+    const address = await listen(server);
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+    const rootPageId = getRootPagePublicId();
+    const rootPath = `/page/${rootPageId}`;
+    const response = await fetch(`${baseUrl}/byoclaw/issue`, {
+      body: new URLSearchParams({
+        pageId: rootPageId,
+        tokenMode: "long_lived"
+      }),
+      headers: {
+        "content-type": "application/x-www-form-urlencoded"
+      },
+      method: "POST"
+    });
+    const html = await response.text();
+
+    assert.equal(response.status, 200);
+    assert.match(html, new RegExp(`data-return-path="${rootPath}"`));
+    assert.match(html, /data-gateway-status-path="\/byoclaw\/status\//);
+
+    const fallbackResponse = await fetch(`${baseUrl}/byoclaw/issue`, {
+      redirect: "manual"
+    });
+
+    assert.equal(fallbackResponse.status, 302);
+    assert.equal(fallbackResponse.headers.get("location"), `${rootPath}?byoclaw=1`);
   } finally {
     await close(server);
   }

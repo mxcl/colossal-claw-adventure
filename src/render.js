@@ -907,6 +907,7 @@ function renderBringYourClawModal(input) {
       data-bring-your-claw-modal
       data-gateway-id="${gateway ? escapeHtml(gateway.gatewayId) : ""}"
       data-gateway-ready="${pollForHandshake ? "0" : "1"}"
+      data-return-path="${escapeHtml(currentPath)}"
       data-gateway-status-path="${
         pollForHandshake
           ? `/byoclaw/status/${encodeURIComponent(gateway.gatewayId)}`

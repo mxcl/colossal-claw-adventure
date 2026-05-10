@@ -13,6 +13,10 @@
     : false;
   let handshakePollTimer = null;
 
+  function modalReturnPath() {
+    return modal ? modal.getAttribute("data-return-path") || "" : "";
+  }
+
   async function copyText(text) {
     if (navigator.clipboard && window.isSecureContext) {
       await navigator.clipboard.writeText(text);
@@ -54,16 +58,17 @@
       modal.hidden = true;
     }
 
-    const url = new URL(window.location.href);
+    const url = new URL(modalReturnPath() || window.location.href, window.location.origin);
     if (url.searchParams.has("byoclaw") || url.searchParams.has("issue")) {
       url.searchParams.delete("byoclaw");
       url.searchParams.delete("issue");
-      const next =
-        url.pathname +
-        (url.searchParams.toString() ? `?${url.searchParams.toString()}` : "") +
-        url.hash;
-      window.history.replaceState({}, "", next);
     }
+
+    const next =
+      url.pathname +
+      (url.searchParams.toString() ? `?${url.searchParams.toString()}` : "") +
+      url.hash;
+    window.history.replaceState({}, "", next);
   }
 
   function openActivityModal() {
@@ -89,7 +94,7 @@
   }
 
   function currentPageUrlWithoutModalParams() {
-    const url = new URL(window.location.href);
+    const url = new URL(modalReturnPath() || window.location.href, window.location.origin);
     url.searchParams.delete("byoclaw");
     url.searchParams.delete("issue");
     return (
