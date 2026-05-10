@@ -71,6 +71,7 @@ async function parsePrompt(html, baseUrl, cookieHeader) {
   assert.ok(tokenMatch, "expected a bearer token in the copied prompt");
 
   return {
+    prompt: promptBody.prompt,
     statusPath: statusPathMatch[1],
     token: tokenMatch[1]
   };
@@ -128,6 +129,15 @@ test("issued prompt page carries story return path and GET issue fallback redire
     assert.equal(response.status, 200);
     assert.match(html, new RegExp(`data-return-path="${rootPath}"`));
     assert.match(html, /data-gateway-status-path="\/byoclaw\/status\//);
+
+    const cookieHeader = toCookieHeader(getSetCookies(response));
+    const issuedPrompt = await parsePrompt(html, baseUrl, cookieHeader);
+
+    assert.match(issuedPrompt.prompt, /polling every 4 hours/);
+    assert.match(issuedPrompt.prompt, /Codex AUTOMATION/);
+    assert.match(issuedPrompt.prompt, /do not create a system cron job/);
+    assert.doesNotMatch(issuedPrompt.prompt, /poll every 2 hours/);
+    assert.doesNotMatch(issuedPrompt.prompt, /Create a cron job/);
 
     const fallbackResponse = await fetch(`${baseUrl}/byoclaw/issue`, {
       redirect: "manual"
