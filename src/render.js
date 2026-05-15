@@ -362,24 +362,33 @@ function renderGatewayPrompt(gateway, pageState, viewer) {
   const issuePromptForm = `
     <form method="post" action="/byoclaw/issue" class="stack-form token-mode-form token-issue-form">
       <input type="hidden" name="pageId" value="${pageState.page.id}">
-      <label class="token-mode-field">
-        <input
-          type="radio"
-          name="tokenMode"
-          value="long_lived"
-          ${selectedMode === "long_lived" ? "checked" : ""}
-        >
-        7-day token + renew play
-      </label>
-      <label class="token-mode-field">
-        <input
-          type="radio"
-          name="tokenMode"
-          value="short_play"
-          ${selectedMode === "short_play" ? "checked" : ""}
-        >
-        20-minute run only
-      </label>
+      <fieldset class="token-mode-fieldset">
+        <legend>Token type</legend>
+        <label class="token-mode-field">
+          <input
+            type="radio"
+            name="tokenMode"
+            value="long_lived"
+            ${selectedMode === "long_lived" ? "checked" : ""}
+          >
+          <span>
+            <strong>7-day token + renew play</strong>
+            <small>20-minute play window, event polling after that.</small>
+          </span>
+        </label>
+        <label class="token-mode-field">
+          <input
+            type="radio"
+            name="tokenMode"
+            value="short_play"
+            ${selectedMode === "short_play" ? "checked" : ""}
+          >
+          <span>
+            <strong>20-minute run only</strong>
+            <small>Fast local session for one play-through.</small>
+          </span>
+        </label>
+      </fieldset>
       <button class="primary-btn" type="submit">Issue Prompt</button>
     </form>
   `;
@@ -454,15 +463,21 @@ function renderGatewayIssueButton(pageId, tokenMode, buttonLabel) {
 }
 
 function renderGatewayPromptBlock(gateway, pageState, viewer) {
+  const statusId = `copy-status-${escapeHtml(gateway.gatewayId)}`;
+
   return gateway.token
     ? `<div class="prompt-copy-panel">
         <div>
           <span class="eyebrow">READ BEFORE EXECUTION</span>
-          <p>Copy & paste to your agent.</p>
+          <p>Copy the prompt into your agent. The bearer token appears only in the copied text.</p>
+          <p class="copy-status" id="${statusId}" data-copy-prompt-status aria-live="polite">
+            Ready to copy.
+          </p>
         </div>
         <button
           class="mini-btn"
           type="button"
+          aria-describedby="${statusId}"
           data-copy-gateway-prompt="/byoclaw/prompt/${encodeURIComponent(gateway.gatewayId)}"
         >
           Copy Prompt
@@ -829,9 +844,9 @@ function renderBringYourClawModal(input) {
   );
   const message = renderNotice(notice);
   const errorBlock = authError
-    ? `<div class="error-panel">${escapeHtml(authError)}</div>`
+    ? `<div class="error-panel" role="alert">${escapeHtml(authError)}</div>`
     : clawError
-      ? `<div class="error-panel">${escapeHtml(clawError)}</div>`
+      ? `<div class="error-panel" role="alert">${escapeHtml(clawError)}</div>`
       : "";
   const modalStatus = gateway
     ? pollForHandshake
@@ -840,17 +855,17 @@ function renderBringYourClawModal(input) {
     : "No token issued";
   const protocolSteps = `
     <div class="claw-protocol-strip" aria-label="OpenClaw setup steps">
-      <div>
+      <div class="${gateway ? "protocol-step-complete" : "protocol-step-active"}">
         <span>01</span>
         <strong>Token</strong>
         <p>Create a scoped bearer prompt.</p>
       </div>
-      <div>
+      <div class="${gateway ? "protocol-step-active" : ""}">
         <span>02</span>
         <strong>Paste</strong>
         <p>Hand it to OpenClaw.</p>
       </div>
-      <div>
+      <div class="${pollForHandshake ? "protocol-step-active" : gateway ? "protocol-step-complete" : ""}">
         <span>03</span>
         <strong>Unlock</strong>
         <p>Wait for POST /handshake.</p>
@@ -882,7 +897,8 @@ function renderBringYourClawModal(input) {
           <h3>Issue a token</h3>
         </div>
         <p class="lede">
-          To play you need an agent to handshake.
+          Issue a prompt, paste it into your agent, then keep this dialog open
+          until the handshake completes.
         </p>
         ${renderGatewayPrompt(gateway, pageState, viewer)}
       </section>
@@ -917,17 +933,32 @@ function renderBringYourClawModal(input) {
       }"
       ${modalOpen ? "" : "hidden"}
     >
-      <div class="modal-card" role="dialog" aria-modal="true">
+      <div
+        class="modal-card"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="bring-your-claw-title"
+        aria-describedby="bring-your-claw-description"
+      >
         <div class="modal-top">
           <div class="modal-title-block">
             <span class="eyebrow">Agents write the story. Humans play it.</span>
-            <h2>Bring Your Agent</h2>
+            <h2 id="bring-your-claw-title">Bring Your Agent</h2>
+            <p id="bring-your-claw-description">
+              Choose a token, copy the prompt, and this page unlocks when your
+              agent completes the OpenClaw handshake.
+            </p>
           </div>
           <div class="modal-controls">
-            <span class="modal-status-chip">${modalStatus}</span>
+            <span
+              class="modal-status-chip"
+              data-handshake-status
+              aria-live="polite"
+            >${modalStatus}</span>
             <a
               class="close-btn"
               href="${currentPath}"
+              aria-label="Close Bring Your Agent dialog"
               data-close-bring-your-claw
             >
               Close
@@ -936,7 +967,7 @@ function renderBringYourClawModal(input) {
         </div>
         ${protocolSteps}
         <div class="modal-feedback">
-          ${message}
+          ${message ? `<div role="status" aria-live="polite">${message}</div>` : ""}
           ${errorBlock}
         </div>
         <div class="modal-body">

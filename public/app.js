@@ -5,6 +5,8 @@
   const closeActivityButtons = document.querySelectorAll("[data-close-claw-activity]");
   const closeButtons = document.querySelectorAll("[data-close-bring-your-claw]");
   const copyButton = document.querySelector("[data-copy-gateway-prompt]");
+  const copyStatus = document.querySelector("[data-copy-prompt-status]");
+  const handshakeStatus = document.querySelector("[data-handshake-status]");
   const gatewayStatusPath = modal
     ? modal.getAttribute("data-gateway-status-path") || ""
     : "";
@@ -12,17 +14,22 @@
     ? modal.getAttribute("data-gateway-ready") === "1"
     : false;
   let handshakePollTimer = null;
+  let modalFocusReturn = null;
+
+  const focusableSelector = [
+    "a[href]",
+    "button:not([disabled])",
+    "input:not([disabled])",
+    "textarea:not([disabled])",
+    "select:not([disabled])",
+    "[tabindex]:not([tabindex='-1'])"
+  ].join(",");
 
   function modalReturnPath() {
     return modal ? modal.getAttribute("data-return-path") || "" : "";
   }
 
-  async function copyText(text) {
-    if (navigator.clipboard && window.isSecureContext) {
-      await navigator.clipboard.writeText(text);
-      return;
-    }
-
+  function fallbackCopyText(text) {
     const fallback = document.createElement("textarea");
     fallback.value = text;
     fallback.setAttribute("readonly", "");
@@ -42,9 +49,139 @@
     }
   }
 
+  async function copyText(text) {
+    let clipboardError = null;
+
+    if (navigator.clipboard && window.isSecureContext) {
+      try {
+        await navigator.clipboard.writeText(text);
+        return;
+      } catch (error) {
+        clipboardError = error;
+      }
+    }
+
+    try {
+      fallbackCopyText(text);
+    } catch (fallbackError) {
+      throw clipboardError || fallbackError;
+    }
+  }
+
+  async function fetchPromptText(promptPath) {
+    const response = await fetch(promptPath, {
+      credentials: "same-origin",
+      headers: {
+        Accept: "application/json"
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error("Prompt is no longer available.");
+    }
+
+    const body = await response.json();
+    return body.prompt || "";
+  }
+
+  async function copyPrompt(promptPath) {
+    if (!promptPath) {
+      throw new Error("Prompt path missing.");
+    }
+
+    const promptPromise = fetchPromptText(promptPath);
+
+    if (
+      navigator.clipboard &&
+      navigator.clipboard.write &&
+      window.ClipboardItem &&
+      window.isSecureContext
+    ) {
+      try {
+        await navigator.clipboard.write([
+          new ClipboardItem({
+            "text/plain": promptPromise.then(
+              (prompt) => new Blob([prompt], { type: "text/plain" })
+            )
+          })
+        ]);
+        return;
+      } catch (_error) {
+        await copyText(await promptPromise);
+        return;
+      }
+    }
+
+    await copyText(await promptPromise);
+  }
+
+  function setCopyStatus(message) {
+    if (copyStatus) {
+      copyStatus.textContent = message;
+    }
+  }
+
+  function setHandshakeStatus(message) {
+    if (handshakeStatus) {
+      handshakeStatus.textContent = message;
+    }
+  }
+
+  function getFocusableElements(container) {
+    return Array.from(container.querySelectorAll(focusableSelector)).filter((element) => {
+      const style = window.getComputedStyle(element);
+      return style.visibility !== "hidden" && style.display !== "none";
+    });
+  }
+
+  function focusDialog(modalElement) {
+    if (!modalElement || modalElement.hidden) {
+      return;
+    }
+
+    window.requestAnimationFrame(() => {
+      const preferred =
+        modalElement.querySelector("[data-copy-gateway-prompt]") ||
+        modalElement.querySelector("[data-close-bring-your-claw]") ||
+        modalElement.querySelector("[data-close-claw-activity]");
+      const target = preferred || getFocusableElements(modalElement)[0];
+
+      if (target) {
+        target.focus({ preventScroll: true });
+      }
+    });
+  }
+
+  function trapTabKey(event, modalElement) {
+    if (event.key !== "Tab" || !modalElement || modalElement.hidden) {
+      return;
+    }
+
+    const focusableElements = getFocusableElements(modalElement);
+    if (!focusableElements.length) {
+      return;
+    }
+
+    const first = focusableElements[0];
+    const last = focusableElements[focusableElements.length - 1];
+
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+      return;
+    }
+
+    if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
+
   function openModal() {
     if (modal) {
+      modalFocusReturn = document.activeElement;
       modal.hidden = false;
+      focusDialog(modal);
     }
   }
 
@@ -56,6 +193,11 @@
 
     if (modal) {
       modal.hidden = true;
+    }
+
+    if (modalFocusReturn && typeof modalFocusReturn.focus === "function") {
+      modalFocusReturn.focus({ preventScroll: true });
+      modalFocusReturn = null;
     }
 
     const url = new URL(modalReturnPath() || window.location.href, window.location.origin);
@@ -74,6 +216,7 @@
   function openActivityModal() {
     if (activityModal) {
       activityModal.hidden = false;
+      focusDialog(activityModal);
     }
   }
 
@@ -126,6 +269,7 @@
         return;
       }
 
+      setHandshakeStatus("Handshake complete. Refreshing story state.");
       closeModal();
       window.location.replace(currentPageUrlWithoutModalParams());
     } catch (_error) {
@@ -141,6 +285,7 @@
     handshakePollTimer = window.setInterval(() => {
       void pollHandshakeStatus();
     }, 2000);
+    setHandshakeStatus("Handshake waiting. Checking every 2 seconds.");
   }
 
   closeButtons.forEach((button) => {
@@ -192,6 +337,29 @@
     });
   }
 
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      if (activityModal && !activityModal.hidden) {
+        closeActivityModal();
+        return;
+      }
+
+      if (modal && !modal.hidden) {
+        closeModal();
+      }
+      return;
+    }
+
+    if (activityModal && !activityModal.hidden) {
+      trapTabKey(event, activityModal);
+      return;
+    }
+
+    if (modal && !modal.hidden) {
+      trapTabKey(event, modal);
+    }
+  });
+
   if (document.body.getAttribute("data-modal-open") === "1") {
     openModal();
     startHandshakePolling();
@@ -207,30 +375,24 @@
       const promptPath = copyButton.getAttribute("data-copy-gateway-prompt");
 
       try {
-        if (!promptPath) {
-          throw new Error("Prompt path missing.");
-        }
-
-        const response = await fetch(promptPath, {
-          credentials: "same-origin",
-          headers: {
-            Accept: "application/json"
-          }
-        });
-
-        if (!response.ok) {
-          throw new Error("Prompt is no longer available.");
-        }
-
-        const body = await response.json();
-        await copyText(body.prompt || "");
+        copyButton.disabled = true;
+        copyButton.setAttribute("aria-busy", "true");
+        copyButton.textContent = "Copying...";
+        setCopyStatus("Preparing prompt for clipboard.");
+        await copyPrompt(promptPath);
         copyButton.textContent = "Copied Prompt";
+        setCopyStatus("Prompt copied. Paste it into your agent to continue.");
       } catch (_error) {
         copyButton.textContent = "Copy Failed";
+        setCopyStatus("Copy failed. Issue a fresh prompt or try again.");
+      } finally {
+        copyButton.disabled = false;
+        copyButton.removeAttribute("aria-busy");
       }
 
       window.setTimeout(() => {
         copyButton.textContent = originalLabel;
+        setCopyStatus("Ready to copy.");
       }, 1500);
     });
   }

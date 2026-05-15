@@ -1,0 +1,271 @@
+:root {
+  font-family:
+    "Geist Mono", "SFMono-Regular", "JetBrains Mono", "IBM Plex Mono", monospace;
+  color: #e8dfc8;
+  background: #11110f;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+.scene {
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 52% 52%, rgba(214, 165, 72, 0.08), transparent 36%),
+    linear-gradient(135deg, #141410 0%, #11110f 58%, #18150f 100%);
+  letter-spacing: 0;
+}
+
+.phosphor,
+.scanlines,
+.vignette,
+.crt-tear {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.phosphor {
+  opacity: 0.1;
+  background-image:
+    linear-gradient(rgba(232, 223, 200, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(232, 223, 200, 0.04) 1px, transparent 1px);
+  background-size: 48px 48px;
+}
+
+.scanlines {
+  opacity: 0.17;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(232, 223, 200, 0.1) 0,
+    rgba(232, 223, 200, 0.1) 1px,
+    transparent 1px,
+    transparent 6px
+  );
+  mix-blend-mode: screen;
+}
+
+.crt-tear {
+  height: 42px;
+  background: rgba(214, 165, 72, 0.045);
+  filter: blur(1px);
+}
+
+.vignette {
+  box-shadow: inset 0 0 210px rgba(0, 0, 0, 0.72);
+}
+
+.boot {
+  display: grid;
+  place-items: center;
+  padding: 82px;
+  background: #11110f;
+}
+
+.boot-frame {
+  position: relative;
+  width: 1460px;
+  height: 760px;
+  border: 2px solid rgba(214, 165, 72, 0.42);
+  border-radius: 3px;
+  background: rgba(17, 17, 15, 0.7);
+  box-shadow: inset 0 0 0 1px rgba(232, 223, 200, 0.06);
+  padding: 46px 56px;
+}
+
+.status-row,
+.panel-title {
+  display: flex;
+  justify-content: space-between;
+  color: rgba(232, 223, 200, 0.58);
+  font-size: 22px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.boot-copy {
+  margin-top: 126px;
+}
+
+.type-line {
+  min-height: 82px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.boot-radar {
+  position: absolute;
+  right: 72px;
+  bottom: 66px;
+  width: 240px;
+  height: 240px;
+  opacity: 0.8;
+}
+
+.exploration {
+  transform-origin: center center;
+}
+
+.map-layer {
+  transform-origin: center center;
+}
+
+.cave-map {
+  position: absolute;
+  inset: 0;
+  width: 1920px;
+  height: 1080px;
+}
+
+.node-label {
+  fill: rgba(232, 223, 200, 0.52);
+  font-family:
+    "Geist Mono", "SFMono-Regular", "JetBrains Mono", "IBM Plex Mono", monospace;
+  font-size: 22px;
+  font-weight: 800;
+}
+
+.survey-ring {
+  transform-origin: center;
+}
+
+.expedition-log,
+.artifact-card,
+.claw-counter,
+.map-alert {
+  position: absolute;
+  border: 2px solid rgba(214, 165, 72, 0.32);
+  background: rgba(17, 17, 15, 0.78);
+  box-shadow: inset 0 1px 0 rgba(232, 223, 200, 0.08);
+}
+
+.expedition-log {
+  left: 96px;
+  top: 96px;
+  width: 590px;
+  min-height: 430px;
+  padding: 28px;
+}
+
+.log-lines {
+  display: grid;
+  gap: 18px;
+  margin-top: 34px;
+}
+
+.log-lines p {
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  gap: 18px;
+  margin: 0;
+  color: rgba(232, 223, 200, 0.66);
+  font-size: 27px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.log-lines p.latest {
+  color: #d6a548;
+}
+
+.log-lines span {
+  color: rgba(156, 174, 117, 0.72);
+}
+
+.artifact-card {
+  right: 118px;
+  bottom: 138px;
+  width: 470px;
+  padding: 28px;
+}
+
+.artifact-card strong {
+  display: block;
+  margin: 34px 0 12px;
+  color: #d6a548;
+  font-size: 42px;
+  line-height: 0.95;
+  text-transform: uppercase;
+}
+
+.artifact-card p {
+  margin: 0;
+  color: rgba(232, 223, 200, 0.7);
+  font-size: 25px;
+  line-height: 1.2;
+}
+
+.claw-counter {
+  right: 126px;
+  top: 118px;
+  display: grid;
+  gap: 12px;
+  width: 270px;
+  padding: 24px;
+}
+
+.claw-counter span {
+  color: rgba(232, 223, 200, 0.64);
+  font-size: 20px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.claw-counter strong {
+  color: #e8dfc8;
+  font-size: 86px;
+  line-height: 0.88;
+}
+
+.map-alert {
+  padding: 14px 18px;
+  font-size: 30px;
+  font-weight: 900;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.end-card {
+  display: flex;
+  align-items: center;
+  background: #11110f;
+}
+
+.end-copy {
+  width: 1460px;
+  margin-left: 230px;
+  transform: translateY(42px);
+}
+
+.end-copy h1 {
+  max-width: 1190px;
+  margin: 0 0 42px;
+  color: #e8dfc8;
+  font-size: 104px;
+  line-height: 1;
+  text-wrap: balance;
+}
+
+.end-action {
+  width: max-content;
+  margin-bottom: 30px;
+  padding: 15px 25px;
+  border: 2px solid #d6a548;
+  color: #11110f;
+  background: #d6a548;
+  font-size: 42px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.url {
+  color: rgba(232, 223, 200, 0.68);
+  font-size: 28px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
